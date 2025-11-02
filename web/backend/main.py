@@ -57,7 +57,7 @@ class ContainerCreate(BaseModel):
     cpus: int = Field(..., ge=1, le=32)
     memory: str
     gpus: List[int] = []
-    port: int
+    port: int = 0
     swap: Optional[str] = None
     root_password: Optional[str] = None
 
@@ -260,7 +260,12 @@ def create_container(payload: ContainerCreate):
     reservations = resources.setdefault("reservations", {})
     # devices list
     if payload.gpus:
-        reservations["devices"] = [{"device_ids": payload.gpus}]
+        # store devices in the full expected structure for docker-compose
+        reservations["devices"] = [{
+            "driver": "nvidia",
+            "device_ids": [str(x) for x in payload.gpus],
+            "capabilities": ["gpu"],
+        }]
     # environment
     env = svc.setdefault("environment", {})
     if payload.root_password:
@@ -316,7 +321,11 @@ def modify_container(name: str, payload: ContainerModify):
         limits["memory"] = payload.memory
     if payload.gpus is not None:
         if payload.gpus:
-            reservations["devices"] = [{"device_ids": payload.gpus}]
+            reservations["devices"] = [{
+                "driver": "nvidia",
+                "device_ids": [str(x) for x in payload.gpus],
+                "capabilities": ["gpu"],
+            }]
         else:
             reservations.pop("devices", None)
     env = svc.setdefault("environment", {})

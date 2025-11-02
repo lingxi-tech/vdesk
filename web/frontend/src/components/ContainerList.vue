@@ -19,7 +19,9 @@
                 <v-col cols="2">
                   <v-text-field v-model="form.memory" label="Memory (e.g. 4g)" />
                 </v-col>
-                <!-- Host Port removed from form; backend computes host port from name -->
+                <v-col cols="2">
+                  <v-select v-model="form.gpus" :items="gpuItems" label="GPU IDs" multiple chips dense />
+                </v-col>
               </v-row>
               <v-row>
                 <v-col cols="12">
@@ -99,7 +101,8 @@ export default {
         name: '',
         image: '',
         cpus: 1,
-        memory: '2g'
+        memory: '2g',
+        gpus: [],
       },
       headers: [
         { title: 'Name', key: 'name', value: 'name' },
