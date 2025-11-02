@@ -1,16 +1,20 @@
-# Backend
+Backend is a FastAPI app. From the `web/backend` folder run:
 
-This is a minimal FastAPI backend for the vdesk project.
+1. python3 -m venv .venv
+2. source .venv/bin/activate
+3. pip install -r requirements.txt
+4. uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-Requirements
+APIs:
+- GET /api/images
+- GET /api/containers
+- POST /api/containers
+- PUT /api/containers/{name}
+- POST /api/containers/{name}/action?action=start|stop|restart|delete
 
-- Python 3.8+
-- see `requirements.txt`
+Note: This project calls Docker CLI; ensure Docker is installed and the user has permission.
 
-Run
 
-cd web/backend
-pip install -r requirements.txt
-python main.py
+## Tests
 
-The server listens on port 8000 by default. It exposes endpoints under /containers for listing, creating and managing containers.
+No unit tests are included for the backend in this initial commit. You can add pytest-based tests and run with `pytest` from the `web/backend` folder.

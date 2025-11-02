@@ -1,2 +1,3 @@
 web/frontend/node_modules/
 web/backend/__pycache__/
+web/backend/logs/

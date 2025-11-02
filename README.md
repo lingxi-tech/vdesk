@@ -4,46 +4,63 @@
 
 This is a web-based application, which is used to manage the authorization of the cloud resources.
 
-The backend should be developed in Python, and the frontend should be developed in Vue.
 
-The frontend page shall be with the style similar with docker desktop.
-- The web page shall list the available docker containers
+### Backend
+
+The backend should be developed in Python.
+
+
+
+#### Create a new container
+While creating a new container, the backend shall create a new folder under `<project_root>/containers` with the name specified by the interface, and a template of the docker compose file, which is resides in ./scripts/docker-compose.yml.example under this project, shall be copied to this new folder. Then the following parameters shall be modified in this docker-compose.yml file with the value retrieved from this interface:
+- port, which is the first part of the value of the field `services.my_ws.ports`
+- corresponding image, which is in the docker-compose.yml file, as the value of the field `services.my_ws.image`
+- assigned memory size, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.memory`
+- assigned cpu number, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.cpus`
+- assigned gpu ids, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.reservations.devices.device_ids`
+
+After the modification, a bash command 'docker compose up -d' shall be called to start this new container, the returned value shall be returned to the frontend so that the frontend shall be notified by the result.
+
+#### List the available containers
+The backend shall find all the subfolders under `<project_root>/containers` with valid docker-compose.yml file and treate them as available containers, and following information for each container shall be returned by the interface:
+- assigned user name, which is the folder name;
+- corresponding image, which is in the docker-compose.yml file, as the value of the field `services.my_ws.image`
+- assigned memory size, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.memory`
+- assigned cpu number, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.cpus`
+- assigned gpu ids, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.reservations.devices.device_ids`
+
+#### Modify the certain parameters of an available container
+The backend shall modify certain parameters of an available container specified by the name retrieved from the interface.
+
+
+### Frontend
+
+The frontend should be developed in Vue.
+
+The frontend shall use the style similar with docker desktop, and it shall have a fancy UI like the modern material style.
+
+The frontend main page shall have the following features:
+- It shall list the available docker containers
 - For each container, the following fields shall be displayed:
   - assigned user name
+  - port
   - corresponding image
   - assigned memory size
+  - assigned cpus
   - assigned gpu ids
   - assigned swap size
   - root password
   - state of the container: running, stopped, etc.
-- For each container, the user shall be able to modify the memory size, gpu ids, swap size, and the root password, the modifications are done via a script file whose usage is as follows:
-```bash
-update_container <container_name> <key> <value>
-```
-where \<container_name\> is the assigned user name of the container to be modifed, \<key\> is the parameter name to be modified, including memory_size, swap_size, root_password, and gpu_ids, and \<value\> is the parameter value to be updated.
-The script name is `update_container` and resides in the folder \<project_root\>/scripts.
-- For each container, the user shall be able to delete it, which means all the data related to this container is also deleted;
-- For each container, the user shall be able to stop it, start it, or restart it;
-- For each container, the user shall be able to bring up the container or shut down the container;
-- The user shall be able to start a new container with specified name, it shall be implemented by calling a script:
-```bash
-container-management.sh --dir <dir> --command <command>
-```
-where \<command\> includes:
-- reset_compose: reset the configurations in the directory \<dir\>
-- update_memory \<size\>: update the memory size in the directory \<dir\>
-- update_password \<password\>: update the root password in the directory \<dir\>
-- container_up: bring up the container in the directory \<dir\>
-- container_down: shut down the container in the directory \<dir\>
-- start: start the container in the directory \<dir\>
-- stop: stop the container in the directory \<dir\>
-- restart: restart the container in the directory \<dir\>
-```
-
-- The user shall be able to change the parameter of all the containers. if the forementioned \<dir\> is not specified the parameter of all the containers are changedb by the script `container-management.sh`
-
-
-All the container information shall be stored in a local database and persisted.
+- For each container in the available container list, the user shall be able to modify the memory size, gpu ids, swap size, and the root password, after the modification, the container shall restart automatically to apply the modified parameters;
+- For each container in the available container list, the user shall be able to delete it;
+- For each container in the available container list, the user shall be able to stop it, start it, or restart it;
+- The user shall be able to start a new container with following parameters:
+  - user name, which is a number of 6 digits;
+  - corresponding image, which shall be selected from a list retrieved from the backend;
+  - assigned cpu numbers, which shall be number ranging from 1 to 32;
+  - assigned memory size, which shall be a number trailed with 'g' or 'm'
+  - assigned gpu ids, which shall be an array selected from 0~31 using a multi-selection checkbox;
+  - assigned swap size, which shall be a number trailed with 'g' or 'm'
 
 
 ## How to Run

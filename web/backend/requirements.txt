@@ -1,5 +1,3 @@
 fastapi
 uvicorn[standard]
-SQLAlchemy
-pydantic
-python-multipart
+pyyaml
