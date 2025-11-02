@@ -10,8 +10,11 @@ This is a web-based application, which is used to manage the authorization of th
 The backend should be developed in Python.
 
 #### Create a new container
-While creating a new container, the backend shall create a new folder under `<project_root>/containers` with the name specified by the interface, and a template of the docker compose file, which is resides in ./scripts/docker-compose.yml.example under this project, shall be copied to this new folder. Then the following parameters shall be modified in this docker-compose.yml file with the value retrieved from this interface:
-- port, which is the first part of the value of the field `services.my_ws.ports`
+
+While creating a new container, the backend shall create a new folder under `<project_root>/containers` with the name specified by the interface, and a template of the docker compose file, which is resides in ./scripts/docker-compose.yml.example under this project, shall be copied to this new folder.
+
+Then the following parameters shall be modified in this docker-compose.yml file with the value retrieved from this interface:
+- port, which is the first part of the value of the field `services.my_ws.ports`, the value shall be calculated based on the 6 digits name specified by the interface, the calculation process is: the first digit of the port is mod(digit 1 of `name` + digit 2 of `name`, 6), the last 4 digits is the same as the last 4 digits of `name`
 - corresponding image, which is in the docker-compose.yml file, as the value of the field `services.my_ws.image`
 - assigned memory size, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.memory`
 - assigned cpu number, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.cpus`

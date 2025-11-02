@@ -19,9 +19,7 @@
                 <v-col cols="2">
                   <v-text-field v-model="form.memory" label="Memory (e.g. 4g)" />
                 </v-col>
-                <v-col cols="2">
-                  <v-text-field v-model.number="form.port" label="Host Port" />
-                </v-col>
+                <!-- Host Port removed from form; backend computes host port from name -->
               </v-row>
               <v-row>
                 <v-col cols="12">
@@ -101,8 +99,7 @@ export default {
         name: '',
         image: '',
         cpus: 1,
-        memory: '2g',
-        port: 2222
+        memory: '2g'
       },
       headers: [
         { title: 'Name', key: 'name', value: 'name' },

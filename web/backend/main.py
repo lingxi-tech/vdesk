@@ -170,6 +170,27 @@ def _docker_ps_map():
             continue
     return entries
 
+def compute_host_port_from_name(name: str) -> int:
+    """Compute host port from 6-digit name.
+    First digit = (digit1 + digit2) % 6
+    Last 4 digits = last 4 digits of name
+    Returns integer port.
+    """
+    if not (isinstance(name, str) and name.isdigit() and len(name) == 6):
+        raise ValueError("name must be 6 digits")
+    d1 = int(name[0])
+    d2 = int(name[1])
+    first_digit = (d1 + d2) % 6
+    last4 = name[-4:]
+    port_str = f"{first_digit}{last4}"
+    try:
+        port = int(port_str)
+    except ValueError:
+        raise ValueError("computed port invalid")
+    if port < 1 or port > 65535:
+        raise ValueError("computed port out of range")
+    return port
+
 # Endpoints
 
 @app.get("/api/images")
@@ -187,6 +208,11 @@ def create_container(payload: ContainerCreate):
     # validate name
     if not (payload.name.isdigit() and len(payload.name) == 6):
         raise HTTPException(status_code=400, detail="name must be 6 digits")
+    # compute host port from name per README rules
+    try:
+        host_port = compute_host_port_from_name(payload.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     dest = CONTAINERS_DIR / payload.name
     if dest.exists():
         raise HTTPException(status_code=400, detail="container already exists")
@@ -223,8 +249,8 @@ def create_container(payload: ContainerCreate):
     # fallback default container port
     if not container_port:
         container_port = "22"
-    # set ports mapping using user-specified host port -> template container port
-    svc["ports"] = [f"{payload.port}:{container_port}"]
+    # set ports mapping using computed host port -> template container port
+    svc["ports"] = [f"{host_port}:{container_port}"]
     # ensure deploy/resources structure
     deploy = svc.setdefault("deploy", {})
     resources = deploy.setdefault("resources", {})
@@ -262,15 +288,13 @@ def list_containers():
             continue
         info = parse_compose_info(data)
         info.name = p.name
-        # get container state using docker compose ps
-        ps = run_compose(compose_path, ["ps", "--format", "json"])  # may not be supported in compose v2
+        # determine state from `docker ps -a` STATUS field
         state = None
-        if ps and ps.get("stdout"):
-            out = ps["stdout"].strip()
-            if out:
-                # best effort: if any service listed, consider running
-                state = "running"
-        info.state = state or "unknown"
+        for cname, cstatus in _docker_ps_map():
+            if p.name in cname:
+                state = cstatus
+                break
+        info.state = state or "not running"
         results.append(info)
     return results
 
