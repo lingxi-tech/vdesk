@@ -6,6 +6,10 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
+import uuid
 
 app = FastAPI(title="vdesk-backend")
 
@@ -24,6 +28,27 @@ CONTAINERS_DIR = WEB_ROOT / "containers"
 TEMPLATE_COMPOSE = PROJECT_ROOT / "scripts" / "docker-compose.yml.example"
 
 CONTAINERS_DIR.mkdir(exist_ok=True)
+
+# Setup logs directory and rotating logger
+LOG_DIR = WEB_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "commands.log"
+
+# configure rotating file handler (5MB per file, keep 7 backups)
+handler = RotatingFileHandler(str(LOG_FILE), maxBytes=5 * 1024 * 1024, backupCount=7)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+handler.setFormatter(formatter)
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+# avoid adding duplicate handlers if module reloaded
+if not any(isinstance(h, RotatingFileHandler) and h.baseFilename == str(LOG_FILE) for h in logger.handlers):
+    logger.addHandler(handler)
+# also log to console
+if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    logger.addHandler(console)
 
 # Models
 class ContainerCreate(BaseModel):
@@ -72,8 +97,18 @@ def run_compose(compose_path: Path, args: List[str]):
     cmd = ["docker", "compose", "-f", str(compose_path)] + args
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        # Log command output to the log file
+        try:
+            logging.info("CMD: %s RETURN: %s", ' '.join(cmd), proc.returncode)
+            if proc.stdout:
+                logging.info("STDOUT: %s", proc.stdout)
+            if proc.stderr:
+                logging.info("STDERR: %s", proc.stderr)
+        except Exception:
+            pass
         return {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
     except FileNotFoundError as e:
+        logging.error("CMD FAILED: %s ERROR: %s", ' '.join(cmd), str(e))
         return {"returncode": 127, "stdout": "", "stderr": str(e)}
 
 
@@ -108,14 +143,42 @@ def parse_compose_info(compose_data) -> ContainerInfo:
         pass
     return info
 
+def _docker_ps_map():
+    """Return a list of tuples (name, status) from `docker ps -a`."""
+    try:
+        proc = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}|||{{.Status}}"], capture_output=True, text=True, check=False)
+        # log output
+        try:
+            logging.info("CMD: docker ps -a --format '{{.Names}}|||{{.Status}}' RETURN: %s", proc.returncode)
+            if proc.stdout:
+                logging.info("STDOUT: %s", proc.stdout)
+            if proc.stderr:
+                logging.info("STDERR: %s", proc.stderr)
+        except Exception:
+            pass
+        out = proc.stdout or ""
+    except FileNotFoundError:
+        logging.error("docker command not found when running docker ps -a")
+        return []
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    entries = []
+    for line in lines:
+        try:
+            name, status = line.split('|||', 1)
+            entries.append((name, status))
+        except ValueError:
+            continue
+    return entries
+
 # Endpoints
 
 @app.get("/api/images")
 def list_images():
     # Simple static list; in a real system this might query a registry
     return [
-        "ubuntu:22.04",
-        "python:3.11-slim",
+        "10.233.0.132:8000/hdm/ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
+        "10.233.0.132:8000/ubuntu:22.04",
+        "10.233.0.132:8000/ubuntu:20.04",
         "nvidia/cuda:12.1.0-base-ubuntu22.04",
     ]
 
@@ -140,8 +203,28 @@ def create_container(payload: ContainerCreate):
     svc = data.setdefault("services", {}).setdefault("my_ws", {})
     # set image
     svc["image"] = payload.image
-    # set ports - assume container uses 22 or 8888; we map host port to container 22 by default
-    svc["ports"] = [f"{payload.port}:22"]
+    # determine container-side port from template if present
+    container_port = None
+    ports_def = svc.get("ports")
+    if ports_def and isinstance(ports_def, list) and len(ports_def) > 0:
+        first = ports_def[0]
+        # support short string 'HOST:CONTAINER' or 'HOST:CONTAINER/proto'
+        if isinstance(first, str):
+            try:
+                right = first.split(":", 1)[1]
+                container_port = right.split("/")[0]
+            except Exception:
+                container_port = None
+        elif isinstance(first, dict):
+            # long syntax: { published: 14000, target: 4000 }
+            container_port = str(first.get("target") or first.get("container") or first.get("to") or "")
+            if container_port == "":
+                container_port = None
+    # fallback default container port
+    if not container_port:
+        container_port = "22"
+    # set ports mapping using user-specified host port -> template container port
+    svc["ports"] = [f"{payload.port}:{container_port}"]
     # ensure deploy/resources structure
     deploy = svc.setdefault("deploy", {})
     resources = deploy.setdefault("resources", {})

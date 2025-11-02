@@ -9,8 +9,6 @@ This is a web-based application, which is used to manage the authorization of th
 
 The backend should be developed in Python.
 
-
-
 #### Create a new container
 While creating a new container, the backend shall create a new folder under `<project_root>/containers` with the name specified by the interface, and a template of the docker compose file, which is resides in ./scripts/docker-compose.yml.example under this project, shall be copied to this new folder. Then the following parameters shall be modified in this docker-compose.yml file with the value retrieved from this interface:
 - port, which is the first part of the value of the field `services.my_ws.ports`
@@ -28,10 +26,13 @@ The backend shall find all the subfolders under `<project_root>/containers` with
 - assigned memory size, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.memory`
 - assigned cpu number, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.cpus`
 - assigned gpu ids, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.reservations.devices.device_ids`
+- state of the container, which could be gotten via calling `docker ps` and parse the returned value
 
 #### Modify the certain parameters of an available container
 The backend shall modify certain parameters of an available container specified by the name retrieved from the interface.
 
+
+All the output of the command ran in the backend shall be logged to a log file.
 
 ### Frontend
 

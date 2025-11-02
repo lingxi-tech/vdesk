@@ -1,5 +1,5 @@
 services:
-  my-ws:
+  my_ws:
     image: 10.233.0.132:8000/hdm/aiserver-cu12.4-nomachine:1.0
     cap_add:
       - SYS_PTRACE
