@@ -330,9 +330,44 @@ def modify_container(name: str, payload: ContainerModify):
             reservations.pop("devices", None)
     env = svc.setdefault("environment", {})
     if payload.root_password is not None:
-        env["ROOT_PASSWORD"] = payload.root_password
+        # support both dict and list formats for environment in docker-compose
+        if isinstance(env, list):
+            # items are like 'KEY=VALUE'
+            updated = False
+            for i, item in enumerate(env):
+                if not isinstance(item, str):
+                    continue
+                key = item.split("=", 1)[0]
+                if key in ("ROOTPASSWORD", "ROOT_PASSWORD"):
+                    # preserve the same key style found in the file
+                    env[i] = f"{key}={payload.root_password}"
+                    updated = True
+                    break
+            if not updated:
+                # append using the key name without underscore to match existing examples
+                env.append(f"ROOTPASSWORD={payload.root_password}")
+        elif isinstance(env, dict):
+            # prefer existing key name if present
+            if "ROOTPASSWORD" in env:
+                env["ROOTPASSWORD"] = payload.root_password
+            else:
+                env["ROOT_PASSWORD"] = payload.root_password
     if payload.swap is not None:
-        env["SWAP_SIZE"] = payload.swap
+        # also support swap value updates for both list and dict env formats
+        if isinstance(env, list):
+            updated = False
+            for i, item in enumerate(env):
+                if not isinstance(item, str):
+                    continue
+                key = item.split("=", 1)[0]
+                if key == "SWAP_SIZE":
+                    env[i] = f"SWAP_SIZE={payload.swap}"
+                    updated = True
+                    break
+            if not updated:
+                env.append(f"SWAP_SIZE={payload.swap}")
+        elif isinstance(env, dict):
+            env["SWAP_SIZE"] = payload.swap
 
     save_compose(compose_path, data)
 
