@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 import uuid
 import time
+import os
 
 app = FastAPI(title="vdesk-backend")
 
@@ -213,6 +214,71 @@ def compute_host_port_from_name(name: str) -> int:
     if port < 1 or port > 65535:
         raise ValueError("computed port out of range")
     return port
+
+def get_host_resources():
+    """Return host resources: cpu count, total memory in bytes, gpus list of dicts {id,name}."""
+    # CPUs
+    cpus = os.cpu_count() or 1
+    # Memory: try /proc/meminfo
+    mem_bytes = None
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    parts = line.split()
+                    # value is in kB
+                    mem_kb = int(parts[1])
+                    mem_bytes = mem_kb * 1024
+                    break
+    except Exception:
+        mem_bytes = None
+    # fallback using 'free -b'
+    if mem_bytes is None:
+        try:
+            proc = subprocess.run(['free', '-b'], capture_output=True, text=True, check=False)
+            if proc.stdout:
+                # second line has Mem: <total> ...
+                lines = proc.stdout.splitlines()
+                if len(lines) >= 2:
+                    vals = lines[1].split()
+                    if len(vals) >= 2:
+                        mem_bytes = int(vals[1])
+        except Exception:
+            mem_bytes = None
+    # GPUs: try nvidia-smi to get index and name
+    gpus = []
+    try:
+        proc = subprocess.run(['nvidia-smi', '--query-gpu=index,name', '--format=csv,noheader'], capture_output=True, text=True, check=False)
+        if proc.returncode == 0 and proc.stdout:
+            for line in proc.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # CSV with two fields: index, name
+                parts = [p.strip() for p in line.split(',', 1)]
+                if len(parts) == 2:
+                    gid, gname = parts
+                else:
+                    gid = parts[0]
+                    gname = ''
+                gpus.append({'id': gid, 'name': gname})
+    except FileNotFoundError:
+        # nvidia-smi not present
+        gpus = []
+    except Exception:
+        gpus = []
+    return {'cpus': cpus, 'memory_bytes': mem_bytes, 'gpus': gpus}
+
+
+@app.get('/api/host')
+def host_info():
+    """Return host resource information."""
+    try:
+        info = get_host_resources()
+        return info
+    except Exception as e:
+        logging.exception('failed to get host resources: %s', e)
+        raise HTTPException(status_code=500, detail='failed to get host resources')
 
 # Endpoints
 

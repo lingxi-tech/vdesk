@@ -74,6 +74,22 @@
       </v-col>
     </v-row>
 
+    <v-card class="pa-4 mb-4">
+      <v-card-title>Host Resources</v-card-title>
+      <v-card-text>
+        <div>CPUs: {{ host.cpus }}</div>
+        <div>Memory: {{ host.memory_gb }} GB</div>
+        <div>GPUs:
+          <template v-if="host.gpus.length">
+            <ul style="margin:0;padding-left:1rem">
+              <li v-for="g in host.gpus" :key="g.id">{{ g.id }} - {{ g.name || 'unknown' }}</li>
+            </ul>
+          </template>
+          <span v-else>none</span>
+        </div>
+      </v-card-text>
+    </v-card>
+
     <v-dialog v-model="modifyDialog" max-width="600">
       <v-card>
         <v-card-title>Modify {{ modifyTarget?.name }}</v-card-title>
@@ -119,6 +135,7 @@ export default {
     return {
       containers: [],
       images: [],
+      host: { cpus: 0, memory_gb: 0, gpus: [] },
       loading: false,
       form: {
         name: '',
@@ -148,6 +165,7 @@ export default {
   mounted() {
     this.load()
     this.loadImages()
+    this.loadHost()
   },
   methods: {
     async load() {
@@ -173,10 +191,24 @@ export default {
          this.loading = false
        }
      },
+     async loadHost() {
+      try {
+        const res = await axios.get('/api/host')
+        const d = res.data || {}
+        const memBytes = d.memory_bytes || 0
+        // backend now returns gpus as list of objects {id, name}
+        this.host = { cpus: d.cpus || 0, memory_gb: memBytes ? Math.round(memBytes / (1024*1024*1024) ) : 0, gpus: d.gpus || [] }
+      } catch (e) {
+        console.warn('failed to load host info', e)
+      }
+     },
      async create() {
       this.loading = true
       try {
-        await axios.post('/api/containers', this.form)
+        // normalize and dedupe GPU ids before sending
+        const g = Array.from(new Set((this.form.gpus || []).map(x => Number(x))))
+        const payload = { ...this.form, gpus: g }
+        await axios.post('/api/containers', payload)
         await this.load()
         this.snackbar = { show: true, message: 'Created', color: 'success' }
       } catch (e) {
@@ -211,14 +243,19 @@ export default {
       }
      },
      openModify(item) {
+       // normalize GPU ids to numbers so v-select matches correctly
+       const gpus = (item.gpus || []).map(x => Number(x))
        this.modifyTarget = item
-       this.modifyForm = { gpus: item.gpus || [], swap: item.swap || '', root_password: '', comment: item.comment || '' }
+       this.modifyForm = { gpus: gpus, swap: item.swap || '', root_password: '', comment: item.comment || '' }
        this.modifyDialog = true
      },
      async submitModify() {
       this.loading = true
       try {
-        await axios.put(`/api/containers/${this.modifyTarget.name}`, this.modifyForm)
+        // normalize and deduplicate GPU ids before sending
+        const g = Array.from(new Set((this.modifyForm.gpus || []).map(x => Number(x))))
+        const payload = { ...this.modifyForm, gpus: g }
+        await axios.put(`/api/containers/${this.modifyTarget.name}`, payload)
         this.modifyDialog = false
         await this.load()
         this.snackbar = { show: true, message: 'Modified and restarted', color: 'success' }
