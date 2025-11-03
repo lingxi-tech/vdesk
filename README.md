@@ -23,7 +23,7 @@ Then the following parameters shall be modified in this docker-compose.yml file 
 After the modification, a bash command 'docker compose up -d' shall be called to start this new container, the returned value shall be returned to the frontend so that the frontend shall be notified by the result.
 
 #### List the available containers
-The backend shall find all the subfolders under `<project_root>/containers` with valid docker-compose.yml file and treate them as available containers, and following information for each container shall be returned by the interface:
+The backend shall find all the subfolders under `<project_root>/containers` with valid docker-compose.yml file and treat them as available containers, and following information for each container shall be returned by the interface:
 - assigned user name, which is the folder name;
 - corresponding image, which is in the docker-compose.yml file, as the value of the field `services.my_ws.image`
 - assigned memory size, which is in the docker-compose.yml file, as the value of the field `services.my_ws.deploy.resources.limits.memory`

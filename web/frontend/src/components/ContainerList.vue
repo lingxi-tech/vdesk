@@ -23,6 +23,12 @@
                   <v-select v-model="form.gpus" :items="gpuItems" label="GPU IDs" multiple chips dense />
                 </v-col>
               </v-row>
+
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field v-model="form.comment" label="Comment" />
+                </v-col>
+              </v-row>
               <v-row>
                 <v-col cols="12">
                   <v-btn color="primary" type="submit">Create</v-btn>
@@ -43,11 +49,21 @@
           <v-card-text>
             <v-data-table :items="containers" :headers="headers" class="elevation-1">
               <template #item.actions="{ item }">
-                <v-btn small @click="action(item.name, 'start')">Start</v-btn>
-                <v-btn small @click="action(item.name, 'stop')">Stop</v-btn>
-                <v-btn small @click="action(item.name, 'restart')">Restart</v-btn>
-                <v-btn small color="error" @click="del(item.name)">Delete</v-btn>
-                <v-btn small @click="openModify(item)">Modify</v-btn>
+                <v-btn icon small @click="action(item.name, 'start')" :title="'Start ' + item.name">
+                  <v-icon>mdi-play</v-icon>
+                </v-btn>
+                <v-btn icon small @click="action(item.name, 'stop')" :title="'Stop ' + item.name">
+                  <v-icon>mdi-stop</v-icon>
+                </v-btn>
+                <v-btn icon small @click="action(item.name, 'restart')" :title="'Restart ' + item.name">
+                  <v-icon>mdi-reload</v-icon>
+                </v-btn>
+                <v-btn icon small color="error" @click="del(item.name)" :title="'Delete ' + item.name">
+                  <v-icon>mdi-delete</v-icon>
+                </v-btn>
+                <v-btn icon small @click="openModify(item)" :title="'Modify ' + item.name">
+                  <v-icon>mdi-pencil</v-icon>
+                </v-btn>
               </template>
             </v-data-table>
           </v-card-text>
@@ -61,6 +77,9 @@
         <v-card-text>
           <v-form>
             <v-row>
+              <v-col cols="12">
+                <v-text-field v-model="modifyForm.comment" label="Comment" />
+              </v-col>
               <v-col cols="12">
                 <v-text-field v-model="modifyForm.swap" label="Swap Size (e.g. 2g)" />
               </v-col>
@@ -111,12 +130,13 @@ export default {
         { title: 'Memory', key: 'memory', value: 'memory' },
         { title: 'CPUs', key: 'cpus', value: 'cpus' },
         { title: 'GPUs', key: 'gpus', value: 'gpus' },
+        { title: 'Comment', key: 'comment', value: 'comment' },
         { title: 'State', key: 'state', value: 'state' },
         { title: 'Actions', key: 'actions', value: 'actions' },
       ],
       modifyDialog: false,
       modifyTarget: null,
-      modifyForm: { gpus: [], swap: '', root_password: '' },
+      modifyForm: { gpus: [], swap: '', root_password: '', comment: '' },
       gpuItems: Array.from({ length: 32 }, (_, i) => i),
       snackbar: { show: false, message: '', color: 'info' }
     }
@@ -173,7 +193,7 @@ export default {
     },
     openModify(item) {
       this.modifyTarget = item
-      this.modifyForm = { gpus: item.gpus || [], swap: item.swap || '', root_password: '' }
+      this.modifyForm = { gpus: item.gpus || [], swap: item.swap || '', root_password: '', comment: item.comment || '' }
       this.modifyDialog = true
     },
     async submitModify() {

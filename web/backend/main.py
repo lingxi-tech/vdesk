@@ -60,12 +60,14 @@ class ContainerCreate(BaseModel):
     port: int = 0
     swap: Optional[str] = None
     root_password: Optional[str] = None
+    comment: Optional[str] = None
 
 class ContainerModify(BaseModel):
     memory: Optional[str]
     gpus: Optional[List[int]]
     swap: Optional[str]
     root_password: Optional[str]
+    comment: Optional[str]
 
 class ContainerInfo(BaseModel):
     name: str
@@ -76,6 +78,7 @@ class ContainerInfo(BaseModel):
     port: Optional[int] = None
     swap: Optional[str] = None
     root_password: Optional[str] = None
+    comment: Optional[str] = None
     state: Optional[str] = None
 
 # Helpers
@@ -88,8 +91,27 @@ def load_compose(path: Path):
         return None
 
 
-def save_compose(path: Path, data):
+def save_compose(path: Path, data, comment: Optional[str] = None):
+    """Write compose YAML to file. If comment is provided, write a top-line comment
+    `# comment: ...`. If comment is None, preserve an existing top comment line
+    starting with `# comment:` if present.
+    """
+    comment_line = None
+    if comment is not None:
+        comment_line = f"# comment: {comment}\n"
+    else:
+        # try to preserve existing comment if present
+        if path.exists():
+            try:
+                with path.open() as f:
+                    first = f.readline()
+                    if first.startswith("# comment:"):
+                        comment_line = first
+            except Exception:
+                comment_line = None
     with path.open("w") as f:
+        if comment_line:
+            f.write(comment_line)
         yaml.safe_dump(data, f, sort_keys=False)
 
 
@@ -273,7 +295,7 @@ def create_container(payload: ContainerCreate):
     if payload.swap:
         env["SWAP_SIZE"] = payload.swap
 
-    save_compose(compose_path, data)
+    save_compose(compose_path, data, payload.comment)
 
     # start container
     res = run_compose(compose_path, ["up", "-d"])
@@ -293,6 +315,14 @@ def list_containers():
             continue
         info = parse_compose_info(data)
         info.name = p.name
+        # read optional top comment line from compose file
+        try:
+            with compose_path.open() as f:
+                first = f.readline().strip()
+                if first.startswith("# comment:"):
+                    info.comment = first[len("# comment:"):].strip()
+        except Exception:
+            pass
         # determine state from `docker ps -a` STATUS field
         state = None
         for cname, cstatus in _docker_ps_map():
@@ -369,7 +399,8 @@ def modify_container(name: str, payload: ContainerModify):
         elif isinstance(env, dict):
             env["SWAP_SIZE"] = payload.swap
 
-    save_compose(compose_path, data)
+    # preserve or update top comment when saving
+    save_compose(compose_path, data, payload.comment if getattr(payload, 'comment', None) is not None else None)
 
     # restart to apply
     res = run_compose(compose_path, ["up", "-d", "--force-recreate"])
