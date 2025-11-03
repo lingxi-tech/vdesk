@@ -10,6 +10,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 import uuid
+import time
 
 app = FastAPI(title="vdesk-backend")
 
@@ -299,7 +300,45 @@ def create_container(payload: ContainerCreate):
 
     # start container
     res = run_compose(compose_path, ["up", "-d"])
-    return {"compose_result": res}
+    # run patch script to adjust the freshly created container
+    patch_script = PROJECT_ROOT / "scripts" / "patches.sh"
+    patch_result = None
+    try:
+        # poll for the container to appear (timeout 30s)
+        # expected container name format: <project>-<service>-1 where project is the folder name (payload.name)
+        container_name = f"{payload.name}-my_ws-1"
+        found = False
+        start = time.time()
+        timeout = 30
+        interval = 1
+        while time.time() - start < timeout:
+            try:
+                for cname, _ in _docker_ps_map():
+                    if cname == container_name or container_name in cname:
+                        found = True
+                        break
+            except Exception:
+                found = False
+            if found:
+                logging.info("Container %s appeared after %.1fs", container_name, time.time() - start)
+                break
+            time.sleep(interval)
+        if not found:
+            logging.warning("Container %s did not appear within %s seconds, proceeding to run patch script anyway", container_name, timeout)
+        proc = subprocess.run(["/bin/bash", str(patch_script), container_name], capture_output=True, text=True, check=False)
+        logging.info("PATCH CMD: %s %s RETURN: %s", str(patch_script), container_name, proc.returncode)
+        if proc.stdout:
+            logging.info("PATCH STDOUT: %s", proc.stdout)
+        if proc.stderr:
+            logging.info("PATCH STDERR: %s", proc.stderr)
+        patch_result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+    except FileNotFoundError as e:
+        logging.error("PATCH SCRIPT NOT FOUND: %s", str(e))
+        patch_result = {"returncode": 127, "stdout": "", "stderr": str(e)}
+    except Exception as e:
+        logging.exception("error running patch script: %s", e)
+        patch_result = {"returncode": 1, "stdout": "", "stderr": str(e)}
+    return {"compose_result": res, "patch_result": patch_result}
 
 @app.get("/api/containers")
 def list_containers():

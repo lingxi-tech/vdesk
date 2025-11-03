@@ -1,6 +1,9 @@
 <template>
   <v-container>
-    <v-row>
+    <v-overlay :absolute="true" :value="loading">
+      <v-progress-circular indeterminate size="64" color="primary" />
+    </v-overlay>
+     <v-row>
       <v-col cols="12">
         <v-card class="pa-4">
           <v-card-title>Create Container</v-card-title>
@@ -31,7 +34,7 @@
               </v-row>
               <v-row>
                 <v-col cols="12">
-                  <v-btn color="primary" type="submit">Create</v-btn>
+                  <v-btn color="primary" type="submit" :disabled="loading">Create</v-btn>
                 </v-col>
               </v-row>
             </v-form>
@@ -49,19 +52,19 @@
           <v-card-text>
             <v-data-table :items="containers" :headers="headers" class="elevation-1">
               <template #item.actions="{ item }">
-                <v-btn icon small @click="action(item.name, 'start')" :title="'Start ' + item.name">
+                <v-btn icon small @click="action(item.name, 'start')" :title="'Start ' + item.name" :disabled="loading">
                   <v-icon>mdi-play</v-icon>
                 </v-btn>
-                <v-btn icon small @click="action(item.name, 'stop')" :title="'Stop ' + item.name">
+                <v-btn icon small @click="action(item.name, 'stop')" :title="'Stop ' + item.name" :disabled="loading">
                   <v-icon>mdi-stop</v-icon>
                 </v-btn>
-                <v-btn icon small @click="action(item.name, 'restart')" :title="'Restart ' + item.name">
+                <v-btn icon small @click="action(item.name, 'restart')" :title="'Restart ' + item.name" :disabled="loading">
                   <v-icon>mdi-reload</v-icon>
                 </v-btn>
-                <v-btn icon small color="error" @click="del(item.name)" :title="'Delete ' + item.name">
+                <v-btn icon small color="error" @click="del(item.name)" :title="'Delete ' + item.name" :disabled="loading">
                   <v-icon>mdi-delete</v-icon>
                 </v-btn>
-                <v-btn icon small @click="openModify(item)" :title="'Modify ' + item.name">
+                <v-btn icon small @click="openModify(item)" :title="'Modify ' + item.name" :disabled="loading">
                   <v-icon>mdi-pencil</v-icon>
                 </v-btn>
               </template>
@@ -94,8 +97,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn text @click="modifyDialog = false">Cancel</v-btn>
-          <v-btn color="primary" @click="submitModify">Apply & Restart</v-btn>
+          <v-btn text @click="modifyDialog = false" :disabled="loading">Cancel</v-btn>
+          <v-btn color="primary" @click="submitModify" :disabled="loading">Apply & Restart</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -116,6 +119,7 @@ export default {
     return {
       containers: [],
       images: [],
+      loading: false,
       form: {
         name: '',
         image: '',
@@ -147,56 +151,72 @@ export default {
   },
   methods: {
     async load() {
-      try {
-        const res = await axios.get('/api/containers')
-        this.containers = res.data
-      } catch (e) {
-        this.handleError(e, 'Failed to load containers')
-      }
-    },
-    async loadImages() {
-      try {
-        const res = await axios.get('/api/images')
-        this.images = res.data
-        if (!this.form.image && this.images.length) this.form.image = this.images[0]
-      } catch (e) {
-        this.handleError(e, 'Failed to load images')
-      }
-    },
-    async create() {
+      this.loading = true
+       try {
+         const res = await axios.get('/api/containers')
+         this.containers = res.data
+       } catch (e) {
+         this.handleError(e, 'Failed to load containers')
+       } finally {
+         this.loading = false
+       }
+     },
+     async loadImages() {
+      this.loading = true
+       try {
+         const res = await axios.get('/api/images')
+         this.images = res.data
+         if (!this.form.image && this.images.length) this.form.image = this.images[0]
+       } catch (e) {
+         this.handleError(e, 'Failed to load images')
+       } finally {
+         this.loading = false
+       }
+     },
+     async create() {
+      this.loading = true
       try {
         await axios.post('/api/containers', this.form)
         await this.load()
         this.snackbar = { show: true, message: 'Created', color: 'success' }
       } catch (e) {
         this.handleError(e, 'Failed to create')
+      } finally {
+        this.loading = false
       }
-    },
-    async action(name, act) {
+     },
+     async action(name, act) {
+      this.loading = true
       try {
         await axios.post(`/api/containers/${name}/action`, null, { params: { action: act } })
         await this.load()
         this.snackbar = { show: true, message: act + ' executed', color: 'success' }
       } catch (e) {
         this.handleError(e, `Failed to ${act}`)
+      } finally {
+        this.loading = false
       }
-    },
-    async del(name) {
+     },
+     async del(name) {
+      if (!confirm('delete ' + name + '?')) return
+      this.loading = true
       try {
-        if (!confirm('delete ' + name + '?')) return
         await axios.post(`/api/containers/${name}/action`, null, { params: { action: 'delete' } })
         await this.load()
         this.snackbar = { show: true, message: 'Deleted', color: 'success' }
       } catch (e) {
         this.handleError(e, 'Failed to delete')
+      } finally {
+        this.loading = false
       }
-    },
-    openModify(item) {
-      this.modifyTarget = item
-      this.modifyForm = { gpus: item.gpus || [], swap: item.swap || '', root_password: '', comment: item.comment || '' }
-      this.modifyDialog = true
-    },
-    async submitModify() {
+     },
+     openModify(item) {
+       this.modifyTarget = item
+       this.modifyForm = { gpus: item.gpus || [], swap: item.swap || '', root_password: '', comment: item.comment || '' }
+       this.modifyDialog = true
+     },
+     async submitModify() {
+      this.loading = true
       try {
         await axios.put(`/api/containers/${this.modifyTarget.name}`, this.modifyForm)
         this.modifyDialog = false
@@ -204,9 +224,11 @@ export default {
         this.snackbar = { show: true, message: 'Modified and restarted', color: 'success' }
       } catch (e) {
         this.handleError(e, 'Failed to modify')
+      } finally {
+        this.loading = false
       }
-    },
-    handleError(e, defaultMsg) {
+     },
+     handleError(e, defaultMsg) {
       const msg = e.response?.data?.detail || e.message || defaultMsg
       this.snackbar = { show: true, message: msg, color: 'error' }
       console.error(e)
