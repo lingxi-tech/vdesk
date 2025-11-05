@@ -103,7 +103,7 @@
                 <v-text-field v-model="modifyForm.swap" label="Swap Size (e.g. 2g)" />
               </v-col>
               <v-col cols="12">
-                <v-text-field v-model="modifyForm.root_password" label="Root Password" type="password" />
+                <v-text-field v-model="modifyForm.root_password" label="Root Password" type="text" />
               </v-col>
               <v-col cols="12">
                 <v-select v-model="modifyForm.gpus" :items="gpuItems" label="GPU IDs" multiple chips />

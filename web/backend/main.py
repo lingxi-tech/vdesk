@@ -286,10 +286,10 @@ def host_info():
 def list_images():
     # Simple static list; in a real system this might query a registry
     return [
-        "10.233.0.132:8000/hdm/ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
-        "10.233.0.132:8000/ubuntu:22.04",
-        "10.233.0.132:8000/ubuntu:20.04",
-        "nvidia/cuda:12.1.0-base-ubuntu22.04",
+        "ubuntu:20.04",
+        "ubuntu:22.04",
+        "ubuntu-desktop-nomachine-cuda:22.04-cu12.4.1",
+        "ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
     ]
 
 @app.post("/api/containers")
