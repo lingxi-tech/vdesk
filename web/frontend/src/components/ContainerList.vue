@@ -33,8 +33,11 @@
               </v-row>
 
               <v-row>
-                <v-col cols="12">
+                <v-col cols="9">
                   <v-text-field v-model="form.comment" label="Comment" />
+                </v-col>
+                <v-col cols="3">
+                  <v-text-field v-model="form.shm_size" label="shm_size (e.g. 32gb)" />
                 </v-col>
               </v-row>
               <v-row>
@@ -57,13 +60,16 @@
           <v-card-text>
             <v-data-table :items="containers" :headers="headers" class="elevation-1">
               <template #item.actions="{ item }">
-                <v-btn icon small @click="action(item.name, 'start')" :title="'Start ' + item.name" :disabled="loading">
+                <!-- show Start only when container is not running -->
+                <v-btn v-if="!isRunning(item)" icon small @click="action(item.name, 'start')" :title="'Start ' + item.name" :disabled="loading">
                   <v-icon>mdi-play</v-icon>
                 </v-btn>
-                <v-btn icon small @click="action(item.name, 'stop')" :title="'Stop ' + item.name" :disabled="loading">
+                <!-- show Stop only when container is running -->
+                <v-btn v-if="isRunning(item)" icon small @click="action(item.name, 'stop')" :title="'Stop ' + item.name" :disabled="loading">
                   <v-icon>mdi-stop</v-icon>
                 </v-btn>
-                <v-btn icon small @click="action(item.name, 'restart')" :title="'Restart ' + item.name" :disabled="loading">
+                <!-- show Restart only when running -->
+                <v-btn v-if="isRunning(item)" icon small @click="action(item.name, 'restart')" :title="'Restart ' + item.name" :disabled="loading">
                   <v-icon>mdi-reload</v-icon>
                 </v-btn>
                 <v-btn icon small color="error" @click="del(item.name)" :title="'Delete ' + item.name" :disabled="loading">
@@ -112,6 +118,9 @@
               </v-col>
               <v-col cols="12">
                 <v-select v-model="modifyForm.gpus" :items="gpuItems" label="GPU IDs" multiple chips />
+              </v-col>
+              <v-col cols="12">
+                <v-text-field v-model="modifyForm.shm_size" label="shm_size (e.g. 32gb)" />
               </v-col>
             </v-row>
           </v-form>
@@ -182,6 +191,7 @@ export default {
         image: '',
         cpus: 1,
         memory: '2g',
+        shm_size: '',
         gpus: [],
       },
       headers: [
@@ -189,6 +199,7 @@ export default {
         { title: 'Port', key: 'port', value: 'port' },
         { title: 'Image', key: 'image', value: 'image' },
         { title: 'Memory', key: 'memory', value: 'memory' },
+        { title: 'Shm', key: 'shm_size', value: 'shm_size' },
         { title: 'CPUs', key: 'cpus', value: 'cpus' },
         { title: 'GPUs', key: 'gpus', value: 'gpus' },
         { title: 'Comment', key: 'comment', value: 'comment' },
@@ -197,7 +208,7 @@ export default {
       ],
       modifyDialog: false,
       modifyTarget: null,
-      modifyForm: { gpus: [], swap: '', root_password: '', comment: '' },
+      modifyForm: { gpus: [], swap: '', root_password: '', comment: '', shm_size: '' },
       gpuItems: Array.from({ length: 32 }, (_, i) => i),
       snackbar: { show: false, message: '', color: 'info' },
       loginDialog: false,
@@ -218,6 +229,13 @@ export default {
     }
   },
   methods: {
+    isRunning(item) {
+      const s = (item && item.state) ? String(item.state).trim().toLowerCase() : ''
+      if (!s) return false
+      // treat these statuses as 'running' for UI purposes, but exclude 'paused'
+      const runningIndicators = ['up', 'running', 'restarting', 'healthy']
+      return runningIndicators.some(k => s.includes(k))
+    },
     openLogin() {
       this.loginDialog = true
       this.loginForm = { username: '', password: '' }
@@ -328,7 +346,13 @@ export default {
        // normalize GPU ids to numbers so v-select matches correctly
        const gpus = (item.gpus || []).map(x => Number(x))
        this.modifyTarget = item
-       this.modifyForm = { gpus: gpus, swap: item.swap || '', root_password: '', comment: item.comment || '' }
+       this.modifyForm = {
+         gpus: gpus,
+         swap: item.swap || item.SWAP_SIZE || '',
+         root_password: item.root_password || item.ROOT_PASSWORD || item.ROOTPASSWORD || '',
+         comment: item.comment || '',
+         shm_size: item.shm_size || ''
+       }
        this.modifyDialog = true
      },
      async submitModify() {

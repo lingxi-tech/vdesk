@@ -16,6 +16,7 @@ from typing import Dict
 import os
 import json
 import bcrypt
+import secrets
 
 app = FastAPI(title="vdesk-backend")
 
@@ -62,6 +63,7 @@ class ContainerCreate(BaseModel):
     image: str
     cpus: int = Field(..., ge=1, le=32)
     memory: str
+    shm_size: Optional[str] = None
     gpus: List[int] = []
     port: int = 0
     swap: Optional[str] = None
@@ -70,6 +72,7 @@ class ContainerCreate(BaseModel):
 
 class ContainerModify(BaseModel):
     memory: Optional[str]
+    shm_size: Optional[str]
     gpus: Optional[List[int]]
     swap: Optional[str]
     root_password: Optional[str]
@@ -79,6 +82,7 @@ class ContainerInfo(BaseModel):
     name: str
     image: Optional[str] = None
     memory: Optional[str] = None
+    shm_size: Optional[str] = None
     cpus: Optional[str] = None
     gpus: Optional[List[int]] = None
     port: Optional[int] = None
@@ -159,6 +163,8 @@ def parse_compose_info(compose_data) -> ContainerInfo:
                 info.port = host
             except Exception:
                 pass
+        # shm_size may be present
+        info.shm_size = svc.get("shm_size")
         deploy = svc.get("deploy", {})
         limits = deploy.get("resources", {}).get("limits", {})
         info.memory = limits.get("memory")
@@ -170,8 +176,26 @@ def parse_compose_info(compose_data) -> ContainerInfo:
             info.gpus = devices[0].get("device_ids") if devices[0].get("device_ids") is not None else devices
         # environment
         env = svc.get("environment", {})
-        info.root_password = env.get("ROOT_PASSWORD")
-        info.swap = env.get("SWAP_SIZE")
+        # environment in docker-compose may be a dict or a list of 'KEY=VALUE' strings
+        root_pw = None
+        swap_val = None
+        if isinstance(env, dict):
+            root_pw = env.get("ROOT_PASSWORD") or env.get("ROOTPASSWORD")
+            swap_val = env.get("SWAP_SIZE")
+        elif isinstance(env, list):
+            for item in env:
+                try:
+                    if not isinstance(item, str):
+                        continue
+                    k, v = item.split("=", 1)
+                    if k in ("ROOT_PASSWORD", "ROOTPASSWORD"):
+                        root_pw = v
+                    if k == "SWAP_SIZE":
+                        swap_val = v
+                except Exception:
+                    continue
+        info.root_password = root_pw
+        info.swap = swap_val
     except Exception:
         pass
     return info
@@ -293,12 +317,13 @@ def host_info():
 
 @app.get("/api/images")
 def list_images():
-    # Simple static list; in a real system this might query a registry
+    # Use environment variable for registry URL, fallback to default if not set
+    registry_url = os.environ.get("VDESK_REGISTRY_URL", "10.233.0.132:8000")
     return [
         "ubuntu:20.04",
         "ubuntu:22.04",
-        "ubuntu-desktop-nomachine-cuda:22.04-cu12.4.1",
-        "ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
+        f"{registry_url}/hdm/ubuntu-desktop-nomachine-cuda:22.04-cu12.4.1",
+        f"{registry_url}/hdm/ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
     ]
 
 @app.post("/api/containers")
@@ -349,6 +374,9 @@ def create_container(payload: ContainerCreate):
         container_port = "22"
     # set ports mapping using computed host port -> template container port
     svc["ports"] = [f"{host_port}:{container_port}"]
+    # set shared memory size if provided
+    if payload.shm_size:
+        svc["shm_size"] = payload.shm_size
     # ensure deploy/resources structure
     deploy = svc.setdefault("deploy", {})
     resources = deploy.setdefault("resources", {})
@@ -365,11 +393,31 @@ def create_container(payload: ContainerCreate):
             "capabilities": ["gpu"],
         }]
     # environment
-    env = svc.setdefault("environment", {})
+    # support both dict and list formats for environment in the compose template
+    env = svc.get("environment")
+    # generate a strong random root password if not provided
     if payload.root_password:
-        env["ROOT_PASSWORD"] = payload.root_password
-    if payload.swap:
-        env["SWAP_SIZE"] = payload.swap
+        root_pw = payload.root_password
+    else:
+        # generate a URL-safe password of approximately 14-15 characters
+        root_pw = secrets.token_urlsafe(11)
+
+    # use the module-level helper `set_env_key_in_list` (defined earlier)
+
+    if isinstance(env, list):
+        set_env_key_in_list(env, "ROOT_PASSWORD", root_pw)
+        if payload.swap:
+            set_env_key_in_list(env, "SWAP_SIZE", payload.swap)
+    elif isinstance(env, dict):
+        env["ROOT_PASSWORD"] = root_pw
+        if payload.swap:
+            env["SWAP_SIZE"] = payload.swap
+    else:
+        # not present or unexpected type: create dict
+        new_env = {"ROOT_PASSWORD": root_pw}
+        if payload.swap:
+            new_env["SWAP_SIZE"] = payload.swap
+        svc["environment"] = new_env
 
     save_compose(compose_path, data, payload.comment)
 
@@ -413,7 +461,7 @@ def create_container(payload: ContainerCreate):
     except Exception as e:
         logging.exception("error running patch script: %s", e)
         patch_result = {"returncode": 1, "stdout": "", "stderr": str(e)}
-    return {"compose_result": res, "patch_result": patch_result}
+    return {"compose_result": res, "patch_result": patch_result, "root_password": root_pw}
 
 @app.get("/api/containers")
 def list_containers():
@@ -443,7 +491,7 @@ def list_containers():
             if p.name in cname:
                 state = cstatus
                 break
-        info.state = state or "not running"
+        info.state = state or "idle"
         results.append(info)
     return results
 
@@ -472,46 +520,32 @@ def modify_container(name: str, payload: ContainerModify):
             }]
         else:
             reservations.pop("devices", None)
-    env = svc.setdefault("environment", {})
+    # update shm_size when modifying
+    if payload.shm_size is not None:
+        if payload.shm_size:
+            svc["shm_size"] = payload.shm_size
+        else:
+            svc.pop("shm_size", None)
+    env = svc.get("environment")
+    # handle both dict and list formats for environment
     if payload.root_password is not None:
-        # support both dict and list formats for environment in docker-compose
         if isinstance(env, list):
-            # items are like 'KEY=VALUE'
-            updated = False
-            for i, item in enumerate(env):
-                if not isinstance(item, str):
-                    continue
-                key = item.split("=", 1)[0]
-                if key in ("ROOTPASSWORD", "ROOT_PASSWORD"):
-                    # preserve the same key style found in the file
-                    env[i] = f"{key}={payload.root_password}"
-                    updated = True
-                    break
-            if not updated:
-                # append using the key name without underscore to match existing examples
-                env.append(f"ROOTPASSWORD={payload.root_password}")
+            set_env_key_in_list(env, "ROOT_PASSWORD", payload.root_password)
         elif isinstance(env, dict):
-            # prefer existing key name if present
-            if "ROOTPASSWORD" in env:
-                env["ROOTPASSWORD"] = payload.root_password
-            else:
-                env["ROOT_PASSWORD"] = payload.root_password
+            env["ROOT_PASSWORD"] = payload.root_password
+        else:
+            # not present or unexpected type: create dict
+            svc["environment"] = {"ROOT_PASSWORD": payload.root_password}
+            env = svc["environment"]
     if payload.swap is not None:
-        # also support swap value updates for both list and dict env formats
         if isinstance(env, list):
-            updated = False
-            for i, item in enumerate(env):
-                if not isinstance(item, str):
-                    continue
-                key = item.split("=", 1)[0]
-                if key == "SWAP_SIZE":
-                    env[i] = f"SWAP_SIZE={payload.swap}"
-                    updated = True
-                    break
-            if not updated:
-                env.append(f"SWAP_SIZE={payload.swap}")
+            set_env_key_in_list(env, "SWAP_SIZE", payload.swap)
         elif isinstance(env, dict):
             env["SWAP_SIZE"] = payload.swap
+        else:
+            # not present or unexpected type: create dict
+            svc["environment"] = {"SWAP_SIZE": payload.swap}
+            env = svc["environment"]
 
     # preserve or update top comment when saving
     save_compose(compose_path, data, payload.comment if getattr(payload, 'comment', None) is not None else None)
@@ -698,6 +732,29 @@ async def auth_middleware(request: Request, call_next):
     # attach user info to request.state if handlers need it
     request.state.user = user
     return await call_next(request)
+
+
+def set_env_key_in_list(env_list, key, val):
+    """Update or append an environment entry in a docker-compose 'environment' list.
+    env_list: list of strings like 'KEY=VALUE'
+    Modifies env_list in place.
+    """
+    if not isinstance(env_list, list):
+        return
+    updated = False
+    for i, item in enumerate(env_list):
+        if not isinstance(item, str):
+            continue
+        try:
+            k = item.split("=", 1)[0]
+        except Exception:
+            continue
+        if k == key:
+            env_list[i] = f"{key}={val}"
+            updated = True
+            break
+    if not updated:
+        env_list.append(f"{key}={val}")
 
 
 if __name__ == "__main__":
