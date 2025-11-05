@@ -63,18 +63,32 @@ The backend calls docker CLI to manage the containers, so we need to create a do
 docker run -v /var/run/docker.sock:/var/run/docker.sock -v .:/data -p 5173:5173 -p 8000:8000 --name my-dood-container -it ubuntu:22.04 /bin/bash
 ```
 
-In the container, install docker cli:
+where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker socket to this container, so that the backend running in this container can call docker CLI to manage the containers on the host.
+
+`-v .:/data` is used to mount the current project folder to `/data` in the container, so that the backend can access the project files.
+
+`-p 5173:5173` is used to expose the frontend dev server port.
+
+`-p 8000:8000` is used to expose the backend server port. 
+
+In the container, install docker:
 ```bash
-apt update
-apt install apt-transport-https ca-certificates curl gnupg-agent software-properties-common lsb-release -y
+sudo apt update
+sudo apt install apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+
 # Add GPG key
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
 # Add apt sources
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo $VERSION_CODENAME) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
 # Update the software package again
-apt update
-apt install docker-ce-cli -y
+sudo apt update
+
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+sudo usermod -aG docker $USER
 ```
 
 ### Backend

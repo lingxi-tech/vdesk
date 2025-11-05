@@ -4,6 +4,7 @@ import subprocess
 import yaml
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
+from fastapi import Request, Response
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -11,7 +12,10 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 import uuid
 import time
+from typing import Dict
 import os
+import json
+import bcrypt
 
 app = FastAPI(title="vdesk-backend")
 
@@ -82,6 +86,11 @@ class ContainerInfo(BaseModel):
     root_password: Optional[str] = None
     comment: Optional[str] = None
     state: Optional[str] = None
+
+class ChangePasswordModel(BaseModel):
+    old_password: str
+    new_password: str
+
 
 # Helpers
 
@@ -537,6 +546,158 @@ def container_action(name: str, action: str):
             return {"result": "deleted"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+# Simple in-memory auth (demo). Replace with real auth in production.
+USERS_FILE = WEB_ROOT / "users.json"
+
+
+def load_users():
+    """Load users from USERS_FILE. Returns a dict username -> hashed_password_str.
+    If the file does not exist, create a default admin user with password 'admin' hashed.
+    """
+    try:
+        if USERS_FILE.exists():
+            with USERS_FILE.open() as f:
+                data = json.load(f)
+                # ensure keys and values are strings
+                return {str(k): str(v) for k, v in data.items()}
+        # create default admin user
+        default = {}
+        hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
+        default["admin"] = hashed
+        try:
+            with USERS_FILE.open("w") as f:
+                json.dump(default, f)
+        except Exception:
+            logging.exception("failed to write default users file")
+        return default
+    except Exception:
+        logging.exception("failed to load users file")
+        return {}
+
+
+def save_users(users: dict):
+    try:
+        with USERS_FILE.open("w") as f:
+            json.dump(users, f)
+    except Exception:
+        logging.exception("failed to save users file")
+
+
+def set_user_password(username: str, password: str):
+    users = load_users()
+    users[username] = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    save_users(users)
+
+
+# load users into memory; authentication checks will read from USERS for simplicity
+USERS: Dict[str, str] = load_users()
+TOKENS: Dict[str, dict] = {}  # token -> {user, exp}
+
+
+def _create_token(username: str, ttl: int = 60 * 60 * 12):
+    token = uuid.uuid4().hex
+    TOKENS[token] = {"user": username, "exp": time.time() + ttl}
+    return token
+
+
+def _validate_token(token: str):
+    entry = TOKENS.get(token)
+    if not entry:
+        return None
+    if entry.get("exp", 0) < time.time():
+        TOKENS.pop(token, None)
+        return None
+    return entry.get("user")
+
+
+@app.post("/api/login")
+def api_login(payload: dict):
+    username = payload.get("username")
+    password = payload.get("password")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username and password required")
+    expected = USERS.get(username)
+    # expected is a bcrypt hash string; verify
+    try:
+        if expected is None or not bcrypt.checkpw(password.encode(), expected.encode()):
+            raise HTTPException(status_code=401, detail="invalid credentials")
+    except ValueError:
+        # invalid hash format
+        raise HTTPException(status_code=401, detail="invalid credentials")
+    token = _create_token(username)
+    return {"token": token, "user": username}
+
+
+@app.post("/api/logout")
+def api_logout(payload: dict):
+    token = payload.get("token")
+    if token:
+        TOKENS.pop(token, None)
+    return {"result": "ok"}
+
+
+@app.post('/api/change-password')
+def change_password(payload: ChangePasswordModel, request: Request):
+    """Change the password for the authenticated user.
+    Requires Authorization: Bearer <token>. Verifies the provided old_password
+    then sets the new password (hashed) and invalidates existing tokens for
+    that user so they must re-login.
+    """
+    global USERS
+    username = getattr(request.state, 'user', None)
+    if not username:
+        raise HTTPException(status_code=401, detail='unauthorized')
+    if not payload.old_password or not payload.new_password:
+        raise HTTPException(status_code=400, detail='old_password and new_password required')
+    current_hash = USERS.get(username)
+    try:
+        if current_hash is None or not bcrypt.checkpw(payload.old_password.encode(), current_hash.encode()):
+            raise HTTPException(status_code=401, detail='invalid current password')
+    except ValueError:
+        # invalid hash format
+        raise HTTPException(status_code=401, detail='invalid current password')
+
+    # update stored password (this writes users.json)
+    try:
+        set_user_password(username, payload.new_password)
+    except Exception as e:
+        logging.exception('failed to set new password: %s', e)
+        raise HTTPException(status_code=500, detail='failed to set new password')
+
+    # reload USERS into memory
+    # global USERS
+    USERS = load_users()
+
+    # invalidate any existing tokens for this user
+    try:
+        for t, entry in list(TOKENS.items()):
+            if entry.get('user') == username:
+                TOKENS.pop(t, None)
+    except Exception:
+        logging.exception('failed to invalidate tokens for user %s', username)
+
+    return {'result': 'ok', 'message': 'password changed; please re-login'}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # allow public paths
+    public_prefixes = ("/api/login", "/api/images", "/api/openapi.json", "/docs", "/favicon.ico", "/static", "/api/host")
+    path = request.url.path
+    for p in public_prefixes:
+        if path.startswith(p):
+            return await call_next(request)
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if not auth or not auth.lower().startswith("bearer "):
+        return Response(status_code=401, content="unauthorized")
+    token = auth.split(None, 1)[1]
+    user = _validate_token(token)
+    if not user:
+        return Response(status_code=401, content="unauthorized")
+    # attach user info to request.state if handlers need it
+    request.state.user = user
+    return await call_next(request)
 
 
 if __name__ == "__main__":

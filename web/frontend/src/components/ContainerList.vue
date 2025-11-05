@@ -5,7 +5,12 @@
     </v-overlay>
      <v-row>
       <v-col cols="12">
-        <v-card class="pa-4">
+        <v-btn small @click="openLogin" v-if="!auth.token">Login</v-btn>
+        <template v-else>
+          <v-btn small @click="openChangePassword">Change Password</v-btn>
+          <v-btn small @click="logout">Logout ({{ auth.user }})</v-btn>
+        </template>
+       <v-card class="pa-4">
           <v-card-title>Create Container</v-card-title>
           <v-card-text>
             <v-form ref="createForm" @submit.prevent="create">
@@ -119,6 +124,40 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="loginDialog" max-width="400">
+      <v-card>
+        <v-card-title>Login</v-card-title>
+        <v-card-text>
+          <v-form>
+            <v-text-field v-model="loginForm.username" label="Username" />
+            <v-text-field v-model="loginForm.password" label="Password" type="password" />
+          </v-form>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="loginDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="doLogin">Login</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="changePasswordDialog" max-width="400">
+      <v-card>
+        <v-card-title>Change Password</v-card-title>
+        <v-card-text>
+          <v-form>
+            <v-text-field v-model="changePasswordForm.old_password" label="Current Password" type="password" />
+            <v-text-field v-model="changePasswordForm.new_password" label="New Password" type="password" />
+          </v-form>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="changePasswordDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="submitChangePassword" :disabled="loading">Change</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" top>
       {{ snackbar.message }}
       <template #actions>
@@ -137,6 +176,7 @@ export default {
       images: [],
       host: { cpus: 0, memory_gb: 0, gpus: [] },
       loading: false,
+      auth: { token: localStorage.getItem('vdesk_token') || null, user: localStorage.getItem('vdesk_user') || null },
       form: {
         name: '',
         image: '',
@@ -159,15 +199,57 @@ export default {
       modifyTarget: null,
       modifyForm: { gpus: [], swap: '', root_password: '', comment: '' },
       gpuItems: Array.from({ length: 32 }, (_, i) => i),
-      snackbar: { show: false, message: '', color: 'info' }
+      snackbar: { show: false, message: '', color: 'info' },
+      loginDialog: false,
+      loginForm: { username: '', password: '' },
+      changePasswordDialog: false,
+      changePasswordForm: { old_password: '', new_password: '' },
     }
   },
   mounted() {
-    this.load()
-    this.loadImages()
-    this.loadHost()
+    if (this.auth.token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${this.auth.token}`
+      this.load()
+      this.loadImages()
+      this.loadHost()
+    } else {
+      // prompt for login before loading protected resources
+      this.openLogin()
+    }
   },
   methods: {
+    openLogin() {
+      this.loginDialog = true
+      this.loginForm = { username: '', password: '' }
+    },
+    openChangePassword() {
+      this.changePasswordDialog = true
+      this.changePasswordForm = { old_password: '', new_password: '' }
+    },
+    async doLogin() {
+      try {
+        const res = await axios.post('/api/login', this.loginForm)
+        this.auth.token = res.data.token
+        this.auth.user = res.data.user
+        localStorage.setItem('vdesk_token', this.auth.token)
+        localStorage.setItem('vdesk_user', this.auth.user)
+        axios.defaults.headers.common['Authorization'] = `Bearer ${this.auth.token}`
+        this.loginDialog = false
+        this.snackbar = { show: true, message: 'Logged in', color: 'success' }
+        // reload protected data
+        this.load()
+        this.loadImages()
+      } catch (e) {
+        this.handleError(e, 'Login failed')
+      }
+    },
+    logout() {
+      localStorage.removeItem('vdesk_token')
+      localStorage.removeItem('vdesk_user')
+      delete axios.defaults.headers.common['Authorization']
+      this.auth = { token: null, user: null }
+      this.snackbar = { show: true, message: 'Logged out', color: 'info' }
+    },
     async load() {
       this.loading = true
        try {
@@ -265,6 +347,24 @@ export default {
         this.loading = false
       }
      },
+     async submitChangePassword() {
+      if (!this.changePasswordForm.old_password || !this.changePasswordForm.new_password) {
+        this.snackbar = { show: true, message: 'Both fields required', color: 'error' }
+        return
+      }
+      this.loading = true
+      try {
+        const res = await axios.post('/api/change-password', this.changePasswordForm)
+        this.snackbar = { show: true, message: res.data?.message || 'Password changed', color: 'success' }
+        // Invalidate local session and require re-login
+        this.logout()
+        this.changePasswordDialog = false
+      } catch (e) {
+        this.handleError(e, 'Failed to change password')
+      } finally {
+        this.loading = false
+      }
+    },
      handleError(e, defaultMsg) {
       const msg = e.response?.data?.detail || e.message || defaultMsg
       this.snackbar = { show: true, message: msg, color: 'error' }
