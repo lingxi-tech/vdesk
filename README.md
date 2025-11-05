@@ -71,6 +71,10 @@ where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker
 
 `-p 8000:8000` is used to expose the backend server port. 
 
+#### Work inside the container
+
+##### Install docker engine inside the container
+```bash
 In the container, install docker:
 ```bash
 sudo apt update
@@ -91,15 +95,28 @@ sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin dock
 sudo usermod -aG docker $USER
 ```
 
-### Backend
+##### Run the backend and frontend
+Open two terminal sessions to run the backend and frontend respectively.
+In the first terminal, run the backend:
+```bash
+cd /data/web/backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-See `backend/README.md` for instructions on how to run the backend server.
+# set the environment variable for the registry URL
+export VDESK_REGISTRY_URL=""
 
-### Frontend
+uvicorn main:app --reload --host
+```
+In the second terminal, run the frontend:
+```bash
+cd /data/web/frontend
+npm install
+npm run dev -- --host
+```
 
-See `frontend/README.md` for instructions on how to run the frontend application.
 
-**Note:** You need to have Docker installed and running to use this application.
 
 ## Access the remote desktop
 

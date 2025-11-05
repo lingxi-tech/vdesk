@@ -318,12 +318,12 @@ def host_info():
 @app.get("/api/images")
 def list_images():
     # Use environment variable for registry URL, fallback to default if not set
-    registry_url = os.environ.get("VDESK_REGISTRY_URL", "10.233.0.132:8000")
+    registry_url = os.environ.get("VDESK_REGISTRY_URL", "10.233.0.132:8000/hdm/")
     return [
         "ubuntu:20.04",
         "ubuntu:22.04",
-        f"{registry_url}/hdm/ubuntu-desktop-nomachine-cuda:22.04-cu12.4.1",
-        f"{registry_url}/hdm/ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
+        f"{registry_url}ubuntu-desktop-nomachine-cuda:22.04-cu12.4.1",
+        f"{registry_url}ros2-humble-cu12.4.1-nomachine-priviledged:1.0",
     ]
 
 @app.post("/api/containers")
