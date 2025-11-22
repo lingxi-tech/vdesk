@@ -20,7 +20,7 @@ fi
 
 # Install required packages (Debian/Ubuntu)
 apt update
-apt install -y python3 python3-venv python3-pip nodejs npm nginx rsync
+apt install -y python3 python3-venv python3-pip curl ca-certificates nginx rsync
 
 # Copy repo to installation directory
 mkdir -p "$INSTALL_DIR"
@@ -36,6 +36,29 @@ else
   echo "Warning: backend requirements.txt not found: $INSTALL_DIR/web/backend/requirements.txt"
 fi
 deactivate
+
+# Install nvm and Node.js LTS for this user (script runs as root; installs into root's home)
+echo "Installing nvm and Node.js LTS..."
+export NVM_DIR="$HOME/.nvm"
+if [ ! -d "$NVM_DIR" ]; then
+  # install nvm (pinned version); this script is from official nvm repo
+  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.6/install.sh | bash
+fi
+# load nvm
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$NVM_DIR/nvm.sh"
+else
+  echo "nvm install failed or nvm.sh not found at $NVM_DIR/nvm.sh"
+fi
+
+# install and use Node.js LTS so npm is available for frontend build
+if command -v nvm >/dev/null 2>&1; then
+  nvm install --lts
+  nvm alias default 'lts/*' || true
+else
+  echo "nvm not available; frontend build may fail"
+fi
 
 # Build frontend production assets
 if [ -d "$INSTALL_DIR/web/frontend" ]; then

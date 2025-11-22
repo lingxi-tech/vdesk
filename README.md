@@ -8,7 +8,7 @@ This is a web-based application, which is used to manage the authorization of th
 First, clone this repo to local.
 
 ```bash
-git clone http://github.com/..
+git clone https://github.com/lingxi-tech/vdesk
 cd vdesk
 ```
 
@@ -60,7 +60,8 @@ These two images can be used to create the remote desktop containers. and it sha
 The backend calls docker CLI to manage the containers, so we need to create a docker-in-docker container and mount the docker socket to this container.
 
 ```bash
-docker run -v /var/run/docker.sock:/var/run/docker.sock -v .:/data -p 5173:5173 -p 8000:8000 --name vdesk-admin-container -it ubuntu:22.04 /bin/bash
+docker run -v /var/run/docker.sock:/var/run/docker.sock -v .:/data -p 5173:5173 -p 8000:8000 --name vdesk-admin-container -it --privileged=true ubuntu:22.04 /usr/sbin/init
+docker run -it vdesk-admin-container /bin/bash
 ```
 
 where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker socket to this container, so that the backend running in this container can call docker CLI to manage the containers on the host.
@@ -106,13 +107,13 @@ pip install -r requirements.txt
 # set the environment variable for the registry URL
 export VDESK_REGISTRY_URL=""
 
-uvicorn main:app --reload --host
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 In the second terminal, run the frontend:
 ```bash
 cd /data/web/frontend
 npm install
-npm run dev -- --host
+npm run dev
 ```
 
 

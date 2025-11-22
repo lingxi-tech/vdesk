@@ -180,7 +180,7 @@ def parse_compose_info(compose_data) -> ContainerInfo:
         root_pw = None
         swap_val = None
         if isinstance(env, dict):
-            root_pw = env.get("ROOT_PASSWORD") or env.get("ROOTPASSWORD")
+            root_pw = env.get("ROOTPASSWORD")
             swap_val = env.get("SWAP_SIZE")
         elif isinstance(env, list):
             for item in env:
@@ -188,7 +188,7 @@ def parse_compose_info(compose_data) -> ContainerInfo:
                     if not isinstance(item, str):
                         continue
                     k, v = item.split("=", 1)
-                    if k in ("ROOT_PASSWORD", "ROOTPASSWORD"):
+                    if k in ("ROOTPASSWORD"):
                         root_pw = v
                     if k == "SWAP_SIZE":
                         swap_val = v
@@ -405,16 +405,16 @@ def create_container(payload: ContainerCreate):
     # use the module-level helper `set_env_key_in_list` (defined earlier)
 
     if isinstance(env, list):
-        set_env_key_in_list(env, "ROOT_PASSWORD", root_pw)
+        set_env_key_in_list(env, "ROOTPASSWORD", root_pw)
         if payload.swap:
             set_env_key_in_list(env, "SWAP_SIZE", payload.swap)
     elif isinstance(env, dict):
-        env["ROOT_PASSWORD"] = root_pw
+        env["ROOTPASSWORD"] = root_pw
         if payload.swap:
             env["SWAP_SIZE"] = payload.swap
     else:
         # not present or unexpected type: create dict
-        new_env = {"ROOT_PASSWORD": root_pw}
+        new_env = {"ROOTPASSWORD": root_pw}
         if payload.swap:
             new_env["SWAP_SIZE"] = payload.swap
         svc["environment"] = new_env
@@ -530,12 +530,12 @@ def modify_container(name: str, payload: ContainerModify):
     # handle both dict and list formats for environment
     if payload.root_password is not None:
         if isinstance(env, list):
-            set_env_key_in_list(env, "ROOT_PASSWORD", payload.root_password)
+            set_env_key_in_list(env, "ROOTPASSWORD", payload.root_password)
         elif isinstance(env, dict):
-            env["ROOT_PASSWORD"] = payload.root_password
+            env["ROOTPASSWORD"] = payload.root_password
         else:
             # not present or unexpected type: create dict
-            svc["environment"] = {"ROOT_PASSWORD": payload.root_password}
+            svc["environment"] = {"ROOTPASSWORD": payload.root_password}
             env = svc["environment"]
     if payload.swap is not None:
         if isinstance(env, list):

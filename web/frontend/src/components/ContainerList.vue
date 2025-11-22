@@ -349,7 +349,7 @@ export default {
        this.modifyForm = {
          gpus: gpus,
          swap: item.swap || item.SWAP_SIZE || '',
-         root_password: item.root_password || item.ROOT_PASSWORD || item.ROOTPASSWORD || '',
+         root_password: item.root_password || item.ROOTPASSWORD || '',
          comment: item.comment || '',
          shm_size: item.shm_size || ''
        }
