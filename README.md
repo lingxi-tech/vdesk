@@ -2,7 +2,7 @@
 
 This is a web-based application, which is used to manage the authorization of the cloud resources.
 
-## How to Run
+## Preparations
 
 ### Clone the code
 First, clone this repo to local.
@@ -74,7 +74,6 @@ where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker
 #### Work inside the container
 
 ##### Install docker engine inside the container
-```bash
 In the container, install docker:
 ```bash
 sudo apt update
@@ -95,7 +94,7 @@ sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin dock
 sudo usermod -aG docker $USER
 ```
 
-##### Run the backend and frontend
+##### Run the backend and frontend for development
 Open two terminal sessions to run the backend and frontend respectively.
 In the first terminal, run the backend:
 ```bash
@@ -117,6 +116,49 @@ npm run dev -- --host
 ```
 
 
+##### Production deployment
+
+A helper script is included at `scripts/deploy_prod.sh` to install and configure the application on a Debian/Ubuntu server. The script will:
+- copy the repository to `/opt/vdesk` (use sudo)
+- create a Python virtualenv and install backend requirements
+- build frontend production assets (npm)
+- create a systemd service `vdesk-backend` that runs uvicorn bound to 127.0.0.1:8000
+- configure nginx to serve the frontend `dist/` and reverse-proxy `/api` to the backend
+
+Important: the script makes changes to system configuration (systemd, nginx) and must be run as root. Review the script before running.
+
+Quick deploy steps (on a clean Debian/Ubuntu server):
+
+1. Install required packages (the script does this automatically):
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip nodejs npm nginx rsync
+```
+
+2. Copy or checkout the repository on the server and run the deploy script as root from the repo root:
+
+```bash
+sudo bash scripts/deploy_prod.sh
+```
+
+3. After the script completes:
+- Backend will be available via systemd service `vdesk-backend` listening on 127.0.0.1:8000
+- Nginx will serve the frontend on port 5173 and proxy /api to the backend
+
+Notes and post-deploy tasks:
+- SSL: the script does not configure TLS. For production you must add HTTPS (recommended via Let's Encrypt). Configure nginx to listen on 443 and set up certificates.
+- Docker: the backend manages containers by calling the host docker CLI. Ensure the backend process has access to the Docker socket (e.g. run on the host or run inside a container with `/var/run/docker.sock` mounted and proper permissions).
+- Users: a default admin user is created on first backend run with username `admin` and password `admin`. Change this immediately using the web UI change-password endpoint or by running:
+
+```bash
+# as root on the server
+python3 -m venv /opt/vdesk/venv
+source /opt/vdesk/venv/bin/activate
+python -c "from web.backend.main import set_user_password; set_user_password('admin', 'NEW_PASSWORD')"
+```
+
+- Custom domain: update the nginx `server_name` and firewall rules accordingly.
 
 ## Access the remote desktop
 
