@@ -72,6 +72,13 @@
                 <v-btn v-if="isRunning(item)" icon small @click="action(item.name, 'restart')" :title="'Restart ' + item.name" :disabled="loading">
                   <v-icon>mdi-reload</v-icon>
                 </v-btn>
+                <!-- Exec command button -->
+                <v-btn icon small @click="openExec(item)" :title="'Exec in ' + item.name" :disabled="loading">
+                  <v-icon>mdi-console</v-icon>
+                </v-btn>
+                <v-btn icon small @click="openLogs(item)" :title="'Logs ' + item.name" :disabled="loading">
+                  <v-icon>mdi-history</v-icon>
+                </v-btn>
                 <v-btn icon small color="error" @click="del(item.name)" :title="'Delete ' + item.name" :disabled="loading">
                   <v-icon>mdi-delete</v-icon>
                 </v-btn>
@@ -167,6 +174,50 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="execDialog" max-width="700">
+      <v-card>
+        <v-card-title>Run command in {{ execTarget?.name }}</v-card-title>
+        <v-card-text>
+          <v-form>
+            <v-textarea v-model="execForm.cmd" label="Bash command" rows="3" auto-grow />
+            <div v-if="execResult">
+              <h4>Result (rc={{ execResult.returncode }})</h4>
+              <pre style="white-space:pre-wrap; background:#f5f5f5; padding:8px">{{ execResult.stdout }}{{ execResult.stderr ? '\nERR:\n' + execResult.stderr : '' }}</pre>
+            </div>
+          </v-form>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="execDialog = false" :disabled="loading">Close</v-btn>
+          <v-btn color="primary" @click="submitExec" :disabled="loading">Run</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="logsDialog" max-width="800">
+      <v-card>
+        <v-card-title>Command logs for {{ logsTarget?.name }}</v-card-title>
+        <v-card-text>
+          <div v-if="logsList.length === 0">No logs</div>
+          <div v-else>
+            <v-list dense>
+              <v-list-item v-for="l in logsList" :key="l.id">
+                <v-list-item-content>
+                  <div style="font-size:0.9rem;color:#666">{{ l.timestamp }} — {{ l.user || 'unknown' }}</div>
+                  <div style="font-weight:600">$ {{ l.cmd }}</div>
+                  <pre style="white-space:pre-wrap; background:#f7f7f7; padding:6px; margin-top:6px">{{ l.stdout }}{{ l.stderr ? '\nERR:\n' + l.stderr : '' }}</pre>
+                </v-list-item-content>
+              </v-list-item>
+            </v-list>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn text @click="logsDialog = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" top>
       {{ snackbar.message }}
       <template #actions>
@@ -215,6 +266,13 @@ export default {
       loginForm: { username: '', password: '' },
       changePasswordDialog: false,
       changePasswordForm: { old_password: '', new_password: '' },
+      execDialog: false,
+      execTarget: null,
+      execForm: { cmd: '' },
+      execResult: null,
+      logsDialog: false,
+      logsTarget: null,
+      logsList: [],
     }
   },
   mounted() {
@@ -385,6 +443,81 @@ export default {
         this.changePasswordDialog = false
       } catch (e) {
         this.handleError(e, 'Failed to change password')
+      } finally {
+        this.loading = false
+      }
+    },
+    openExec(item) {
+      this.execTarget = item
+      this.execForm = { cmd: '' }
+      this.execResult = null
+      this.execDialog = true
+    },
+    async openLogs(item) {
+      this.logsTarget = item
+      this.logsList = []
+      this.logsDialog = true
+      this.loading = true
+      try {
+        const res = await axios.get(`/api/containers/${item.name}/exec-logs`)
+        this.logsList = res.data || []
+      } catch (e) {
+        this.handleError(e, 'Failed to load logs')
+      } finally {
+        this.loading = false
+      }
+    },
+    async submitExec() {
+      if (!this.execTarget || !this.execForm.cmd) return
+      this.loading = true
+      try {
+        // open websocket to stream output
+        const token = this.auth.token
+        // In development Vite runs on port 5173 and typically does not proxy websocket upgrades to the backend.
+        // Connect directly to backend on port 8000 when running on the dev server.
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+        let hostForWs = location.host
+        if (location.port === '5173') {
+          hostForWs = `${location.hostname}:8000`
+        }
+        const wsUrl = `${proto}://${hostForWs}/api/containers/${this.execTarget.name}/exec-ws?token=${encodeURIComponent(token)}`
+         const ws = new WebSocket(wsUrl)
+         this.execResult = { stdout: '', stderr: '', returncode: null }
+         ws.onopen = () => {
+           ws.send(JSON.stringify({ cmd: this.execForm.cmd }))
+         }
+         ws.onmessage = (ev) => {
+           try {
+             const msg = JSON.parse(ev.data)
+             if (msg.type === 'stdout') {
+               this.execResult.stdout += msg.data
+             } else if (msg.type === 'stderr') {
+               this.execResult.stderr += msg.data
+             } else if (msg.type === 'exit') {
+               this.execResult.returncode = msg.returncode
+               this.snackbar = { show: true, message: 'Command finished', color: 'success' }
+               ws.close()
+             } else if (msg.type === 'error') {
+               // if auth error, prompt for login
+               if (msg.detail && String(msg.detail).toLowerCase().includes('unauthorized')) {
+                 this.snackbar = { show: true, message: 'Authorization failed; please login again', color: 'error' }
+                 this.logout()
+                 this.openLogin()
+               } else {
+                 this.handleError({ response: { data: { detail: msg.detail } } }, 'Exec error')
+               }
+               ws.close()
+             }
+           } catch (e) {
+             console.error('invalid ws msg', e)
+           }
+         }
+         ws.onerror = (e) => {
+          console.error('ws error', e)
+          this.snackbar = { show: true, message: 'WebSocket error connecting to backend', color: 'error' }
+         }
+      } catch (e) {
+        this.handleError(e, 'Failed to exec')
       } finally {
         this.loading = false
       }

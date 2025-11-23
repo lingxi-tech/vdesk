@@ -98,7 +98,7 @@ systemctl restart vdesk-backend || systemctl start vdesk-backend || true
 # Nginx configuration to serve frontend and proxy /api to backend
 cat > "$NGINX_SITE" <<'EOF'
 server {
-    listen 5173;
+    listen 80;
     server_name _;
 
     root REPLACE_ROOT_DIST;
@@ -109,11 +109,18 @@ server {
     }
 
     location /api {
+        # Proxy to backend (supports WebSocket upgrades)
         proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
     }
 }
 EOF

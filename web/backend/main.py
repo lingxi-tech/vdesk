@@ -17,6 +17,10 @@ import os
 import json
 import bcrypt
 import secrets
+import asyncio
+import shlex
+from fastapi import WebSocket, WebSocketDisconnect
+from asyncio.subprocess import PIPE
 
 app = FastAPI(title="vdesk-backend")
 
@@ -581,6 +585,104 @@ def container_action(name: str, action: str):
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post('/api/containers/{name}/exec')
+def exec_in_container(name: str, payload: dict, request: Request = None):
+    """Execute a shell command inside the container for the given logical name and record the result in a per-container exec log file."""
+    path = CONTAINERS_DIR / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="not found")
+
+    cmd = payload.get('cmd') if isinstance(payload, dict) else None
+    if not cmd:
+        raise HTTPException(status_code=400, detail='cmd required')
+
+    # Find a matching container name from docker ps -a output
+    target_cname = None
+    try:
+        for cname, _ in _docker_ps_map():
+            if cname == name or name in cname:
+                target_cname = cname
+                break
+    except Exception:
+        target_cname = None
+
+    if not target_cname:
+        raise HTTPException(status_code=404, detail='container not found or not running')
+
+    # who executed the command
+    user = None
+    try:
+        user = getattr(request.state, 'user', None) if request is not None else None
+    except Exception:
+        user = None
+
+    try:
+        proc = subprocess.run(["docker", "exec", "-u", "root", target_cname, "/bin/bash", "-c", cmd], capture_output=True, text=True, check=False)
+        try:
+            logging.info("EXEC CMD: docker exec %s %s RETURN: %s", target_cname, cmd, proc.returncode)
+            if proc.stdout:
+                logging.info("EXEC STDOUT: %s", proc.stdout)
+            if proc.stderr:
+                logging.info("EXEC STDERR: %s", proc.stderr)
+        except Exception:
+            pass
+
+        # Append to per-container exec log file (JSON list)
+        try:
+            logs_file = path / 'exec_logs.json'
+            entry = {
+                'id': uuid.uuid4().hex,
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'user': user,
+                'cmd': cmd,
+                'returncode': proc.returncode,
+                'stdout': proc.stdout,
+                'stderr': proc.stderr,
+            }
+            logs = []
+            if logs_file.exists():
+                try:
+                    with logs_file.open() as f:
+                        logs = json.load(f)
+                except Exception:
+                    logs = []
+            logs.append(entry)
+            try:
+                with logs_file.open('w') as f:
+                    json.dump(logs, f)
+            except Exception:
+                logging.exception('failed to write exec logs for %s', name)
+        except Exception:
+            logging.exception('failed to append exec log')
+
+        return {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+    except FileNotFoundError as e:
+        logging.error("docker command not found when running exec: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logging.exception('failed to exec command in container: %s', e)
+        raise HTTPException(status_code=500, detail='failed to exec command')
+
+
+@app.get('/api/containers/{name}/exec-logs')
+def get_exec_logs(name: str):
+    """Return the list of exec logs for the container (newest last)."""
+    path = CONTAINERS_DIR / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail='not found')
+    logs_file = path / 'exec_logs.json'
+    if not logs_file.exists():
+        return []
+    try:
+        with logs_file.open() as f:
+            logs = json.load(f)
+            return logs
+    except Exception:
+        logging.exception('failed to read exec logs for %s', name)
+        raise HTTPException(status_code=500, detail='failed to read logs')
+
+
 # Simple in-memory auth (demo). Replace with real auth in production.
 USERS_FILE = WEB_ROOT / "users.json"
 
@@ -755,6 +857,132 @@ def set_env_key_in_list(env_list, key, val):
             break
     if not updated:
         env_list.append(f"{key}={val}")
+
+
+@app.websocket('/api/containers/{name}/exec-ws')
+async def exec_in_container_ws(websocket: WebSocket, name: str):
+    """WebSocket endpoint to run a command inside a container and stream stdout/stderr.
+    Client should connect to: ws://host/api/containers/{name}/exec-ws?token=<token>
+    After connect, send a JSON message: {"cmd": "..."}
+    The server sends JSON messages:
+      {type: 'stdout', data: '...'}
+      {type: 'stderr', data: '...'}
+      {type: 'exit', returncode: 0}
+    """
+    # validate token from query param
+    token = websocket.query_params.get('token')
+    user = _validate_token(token) if token else None
+    if not user:
+        # reject connection
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+
+    try:
+        # receive initial JSON with cmd
+        msg = await websocket.receive_json()
+        cmd = msg.get('cmd') if isinstance(msg, dict) else None
+        if not cmd:
+            await websocket.send_json({'type': 'error', 'detail': 'cmd required'})
+            await websocket.close()
+            return
+
+        # find target container name
+        target_cname = None
+        try:
+            for cname, _ in _docker_ps_map():
+                if cname == name or name in cname:
+                    target_cname = cname
+                    break
+        except Exception:
+            target_cname = None
+
+        if not target_cname:
+            await websocket.send_json({'type': 'error', 'detail': 'container not found or not running'})
+            await websocket.close()
+            return
+
+        # build shell command to run via docker exec
+        # use bash -lc to allow complex commands
+        full_cmd = f"docker exec -u root {shlex.quote(target_cname)} /bin/bash -lc {shlex.quote(cmd)}"
+
+        # start subprocess
+        proc = await asyncio.create_subprocess_shell(full_cmd, stdout=PIPE, stderr=PIPE)
+
+        stdout_acc = []
+        stderr_acc = []
+
+        async def read_stream(stream, kind):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode(errors='replace')
+                if kind == 'stdout':
+                    stdout_acc.append(text)
+                else:
+                    stderr_acc.append(text)
+                try:
+                    await websocket.send_json({'type': kind, 'data': text})
+                except Exception:
+                    # client disconnected
+                    break
+
+        # concurrently read stdout and stderr
+        tasks = [asyncio.create_task(read_stream(proc.stdout, 'stdout')),
+                 asyncio.create_task(read_stream(proc.stderr, 'stderr'))]
+
+        # wait for process to finish
+        returncode = await proc.wait()
+        # wait for readers to finish
+        await asyncio.gather(*tasks)
+
+        # send exit frame
+        try:
+            await websocket.send_json({'type': 'exit', 'returncode': returncode})
+        except Exception:
+            pass
+
+        # append to exec log file
+        try:
+            path = CONTAINERS_DIR / name
+            logs_file = path / 'exec_logs.json'
+            entry = {
+                'id': uuid.uuid4().hex,
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'user': user,
+                'cmd': cmd,
+                'returncode': returncode,
+                'stdout': ''.join(stdout_acc),
+                'stderr': ''.join(stderr_acc),
+            }
+            logs = []
+            if logs_file.exists():
+                try:
+                    with logs_file.open() as f:
+                        logs = json.load(f)
+                except Exception:
+                    logs = []
+            logs.append(entry)
+            try:
+                with logs_file.open('w') as f:
+                    json.dump(logs, f)
+            except Exception:
+                logging.exception('failed to write exec logs for %s', name)
+        except Exception:
+            logging.exception('failed to append exec log')
+
+        await websocket.close()
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        logging.exception('websocket exec failed')
+        try:
+            await websocket.send_json({'type': 'error', 'detail': 'internal error'})
+            await websocket.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
