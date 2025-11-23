@@ -64,11 +64,17 @@ cd docker/my-ubuntu-with-systemd
 docker build -t my-ubuntu-with-systemd:latest .
 cd ../..
 
-docker run -v /var/run/docker.sock:/var/run/docker.sock -v .:/data -p 5173:5173 -p 8000:8000 --name vdesk-admin-container -it --privileged=true my-ubuntu-with-systemd:latest /usr/sbin/init
+docker run -d \
+  -v /var/run/docker.sock:/docker.sock \
+  -e DOCKER_HOST=unix:///docker.sock \
+  -v .:/data -p 5173:5173 -p 8000:8000 \
+  --name vdesk-admin-container \
+  --privileged \
+  my-ubuntu-with-systemd:latest /usr/sbin/init
 docker exec -it vdesk-admin-container /bin/bash
 ```
 
-where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker socket to this container, so that the backend running in this container can call docker CLI to manage the containers on the host.
+where `-v /var/run/docker.sock:/docker.sock` and `-e DOCKER_HOST=unix:///docker.sock` is used to mount the docker socket to this container, so that the backend running in this container can call docker CLI to manage the containers on the host.
 
 `-v .:/data` is used to mount the current project folder to `/data` in the container, so that the backend can access the project files.
 
