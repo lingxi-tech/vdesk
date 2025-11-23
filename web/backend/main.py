@@ -81,6 +81,8 @@ class ContainerModify(BaseModel):
     swap: Optional[str]
     root_password: Optional[str]
     comment: Optional[str]
+    cpus: Optional[int]
+    realtime_update: Optional[bool] = None
 
 class ContainerInfo(BaseModel):
     name: str
@@ -513,6 +515,9 @@ def modify_container(name: str, payload: ContainerModify):
     resources = deploy.setdefault("resources", {})
     limits = resources.setdefault("limits", {})
     reservations = resources.setdefault("reservations", {})
+    # update compose definition
+    if payload.cpus is not None:
+        limits["cpus"] = str(payload.cpus)
     if payload.memory:
         limits["memory"] = payload.memory
     if payload.gpus is not None:
@@ -554,9 +559,68 @@ def modify_container(name: str, payload: ContainerModify):
     # preserve or update top comment when saving
     save_compose(compose_path, data, payload.comment if getattr(payload, 'comment', None) is not None else None)
 
-    # restart to apply
-    res = run_compose(compose_path, ["up", "-d", "--force-recreate"])
-    return {"compose_result": res}
+    # Check if realtime update is requested
+    if payload.realtime_update:
+        # Update live config without recreate
+        live_result = {}
+        # Find container name
+        target_cname = None
+        for cname, _ in _docker_ps_map():
+            if name in cname:
+                target_cname = cname
+                break
+        if not target_cname:
+            return {"compose_result": "updated_compose_only", "live_result": {"error": "container not found for live update"}}
+        # Get full container ID
+        proc = subprocess.run(["docker", "inspect", target_cname, "--format", "{{.Id}}"], capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            live_result["error"] = f"failed to get container ID: {proc.stderr}"
+        else:
+            container_id = proc.stdout.strip()
+            # Assume Docker data root is /data/docker (from scripts)
+            config_dir = f"/data/docker/containers/{container_id}"
+            if not os.path.exists(config_dir):
+                live_result["error"] = f"config dir not found: {config_dir}"
+            else:
+                # Stop Docker
+                subprocess.run(["systemctl", "stop", "docker"], check=False)
+                subprocess.run(["systemctl", "stop", "docker.socket"], check=False)
+                # Edit hostconfig.json
+                hostconfig_path = os.path.join(config_dir, "hostconfig.json")
+                if os.path.exists(hostconfig_path):
+                    try:
+                        with open(hostconfig_path, 'r') as f:
+                            config = json.load(f)
+                        # Update fields
+                        if payload.cpus is not None:
+                            config['CpuCount'] = payload.cpus
+                        if payload.memory:
+                            config['Memory'] = parse_memory_to_bytes(payload.memory)
+                        if payload.gpus is not None:
+                            if payload.gpus:
+                                config['DeviceIDs'] = [str(g) for g in payload.gpus]
+                            else:
+                                config['DeviceIDs'] = None
+                        if payload.swap:
+                            config['MemorySwap'] = parse_memory_to_bytes(payload.swap)
+                        if payload.shm_size:
+                            config['ShmSize'] = parse_memory_to_bytes(payload.shm_size)
+                        # Write back
+                        with open(hostconfig_path, 'w') as f:
+                            json.dump(config, f, indent=2)
+                        live_result["updated"] = True
+                    except Exception as e:
+                        live_result["error"] = f"failed to update hostconfig: {str(e)}"
+                else:
+                    live_result["error"] = "hostconfig.json not found"
+                # Restart Docker
+                subprocess.run(["systemctl", "start", "docker.socket"], check=False)
+                subprocess.run(["systemctl", "start", "docker"], check=False)
+        return {"compose_result": "updated_no_restart", "live_result": live_result}
+    else:
+        # Recreate the container
+        res = run_compose(compose_path, ["up", "-d", "--force-recreate"])
+        return {"compose_result": res}
 
 @app.post("/api/containers/{name}/action")
 def container_action(name: str, action: str):
@@ -983,6 +1047,22 @@ async def exec_in_container_ws(websocket: WebSocket, name: str):
             await websocket.close()
         except Exception:
             pass
+
+
+def parse_memory_to_bytes(mem_str: str) -> int:
+    """Parse memory string like '4g', '512m', '1G' to bytes."""
+    if not mem_str:
+        return 0
+    mem_str = mem_str.lower().strip()
+    if mem_str.endswith('g'):
+        return int(float(mem_str[:-1]) * 1024**3)
+    elif mem_str.endswith('m'):
+        return int(float(mem_str[:-1]) * 1024**2)
+    elif mem_str.endswith('k'):
+        return int(float(mem_str[:-1]) * 1024)
+    else:
+        # assume bytes
+        return int(float(mem_str))
 
 
 if __name__ == "__main__":

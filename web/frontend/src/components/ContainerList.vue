@@ -117,6 +117,12 @@
               <v-col cols="12">
                 <v-text-field v-model="modifyForm.comment" label="Comment" />
               </v-col>
+              <v-col cols="6">
+                <v-text-field v-model.number="modifyForm.cpus" type="number" min="1" max="32" label="CPUs" />
+              </v-col>
+              <v-col cols="6">
+                <v-text-field v-model="modifyForm.memory" label="Memory (e.g. 4g)" />
+              </v-col>
               <v-col cols="12">
                 <v-text-field v-model="modifyForm.swap" label="Swap Size (e.g. 2g)" />
               </v-col>
@@ -135,7 +141,23 @@
         <v-card-actions>
           <v-spacer />
           <v-btn text @click="modifyDialog = false" :disabled="loading">Cancel</v-btn>
-          <v-btn color="primary" @click="submitModify" :disabled="loading">Apply & Restart</v-btn>
+          <v-btn color="primary" @click="submitModify" :disabled="loading">Apply</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="realtimeDialog" max-width="500">
+      <v-card>
+        <v-card-title>Update Method</v-card-title>
+        <v-card-text>
+          Some parameters (CPUs, Memory, GPUs, Swap, Shm Size) require realtime update, which will restart the Docker daemon. If you choose recreate, the container will be recreated, which may cause data loss.
+          <br><br>
+          Do you want to update in realtime?
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="chooseRealtime(false)">Recreate</v-btn>
+          <v-btn @click="chooseRealtime(true)">Realtime Update</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -259,7 +281,7 @@ export default {
       ],
       modifyDialog: false,
       modifyTarget: null,
-      modifyForm: { gpus: [], swap: '', root_password: '', comment: '', shm_size: '' },
+      modifyForm: { gpus: [], swap: '', root_password: '', comment: '', shm_size: '', cpus: null, memory: '', realtime_update: null },
       gpuItems: Array.from({ length: 32 }, (_, i) => i),
       snackbar: { show: false, message: '', color: 'info' },
       loginDialog: false,
@@ -273,6 +295,7 @@ export default {
       logsDialog: false,
       logsTarget: null,
       logsList: [],
+      realtimeDialog: false,
     }
   },
   mounted() {
@@ -406,14 +429,37 @@ export default {
        this.modifyTarget = item
        this.modifyForm = {
          gpus: gpus,
+         cpus: item.cpus ? Number(item.cpus) : null,
+         memory: item.memory || '',
          swap: item.swap || item.SWAP_SIZE || '',
          root_password: item.root_password || item.ROOTPASSWORD || '',
          comment: item.comment || '',
-         shm_size: item.shm_size || ''
+         shm_size: item.shm_size || '',
+         realtime_update: null
        }
        this.modifyDialog = true
      },
      async submitModify() {
+       // check if realtime needed
+       let needsRealtime = false;
+       if (this.modifyForm.cpus !== null && Number(this.modifyTarget.cpus) !== this.modifyForm.cpus) needsRealtime = true;
+       if (this.modifyForm.memory && this.modifyForm.memory !== this.modifyTarget.memory) needsRealtime = true;
+       if (JSON.stringify(this.modifyForm.gpus.sort()) !== JSON.stringify((this.modifyTarget.gpus || []).map(x => Number(x)).sort())) needsRealtime = true;
+       if (this.modifyForm.swap && this.modifyForm.swap !== (this.modifyTarget.swap || this.modifyTarget.SWAP_SIZE || '')) needsRealtime = true;
+       if (this.modifyForm.shm_size && this.modifyForm.shm_size !== this.modifyTarget.shm_size) needsRealtime = true;
+       if (needsRealtime) {
+         this.realtimeDialog = true;
+       } else {
+         this.modifyForm.realtime_update = false;
+         this.doSubmitModify();
+       }
+     },
+     chooseRealtime(choice) {
+       this.modifyForm.realtime_update = choice;
+       this.realtimeDialog = false;
+       this.doSubmitModify();
+     },
+     async doSubmitModify() {
       this.loading = true
       try {
         // normalize and deduplicate GPU ids before sending
@@ -422,7 +468,7 @@ export default {
         await axios.put(`/api/containers/${this.modifyTarget.name}`, payload)
         this.modifyDialog = false
         await this.load()
-        this.snackbar = { show: true, message: 'Modified and restarted', color: 'success' }
+        this.snackbar = { show: true, message: 'Modified', color: 'success' }
       } catch (e) {
         this.handleError(e, 'Failed to modify')
       } finally {
