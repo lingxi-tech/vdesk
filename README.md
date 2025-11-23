@@ -60,8 +60,12 @@ These two images can be used to create the remote desktop containers. and it sha
 The backend calls docker CLI to manage the containers, so we need to create a docker-in-docker container and mount the docker socket to this container.
 
 ```bash
-docker run -v /var/run/docker.sock:/var/run/docker.sock -v .:/data -p 5173:5173 -p 8000:8000 --name vdesk-admin-container -it --privileged=true ubuntu:22.04 /usr/sbin/init
-docker run -it vdesk-admin-container /bin/bash
+cd docker/my-ubuntu-with-systemd
+docker build -t my-ubuntu-with-systemd:latest .
+cd ../..
+
+docker run -v /var/run/docker.sock:/var/run/docker.sock -v .:/data -p 5173:5173 -p 8000:8000 --name vdesk-admin-container -it --privileged=true my-ubuntu-with-systemd:latest /usr/sbin/init
+docker exec -it vdesk-admin-container /bin/bash
 ```
 
 where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker socket to this container, so that the backend running in this container can call docker CLI to manage the containers on the host.
@@ -77,22 +81,22 @@ where `-v /var/run/docker.sock:/var/run/docker.sock` is used to mount the docker
 ##### Install docker engine inside the container
 In the container, install docker:
 ```bash
-sudo apt update
-sudo apt install apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+apt update
+apt install apt-transport-https ca-certificates curl gnupg-agent software-properties-common
 
 # Add GPG key
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
 # Add apt sources
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo $VERSION_CODENAME) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 # Update the software package again
-sudo apt update
+apt update
 
-sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-sudo usermod -aG docker $USER
+# usermod -aG docker $USER
 ```
 
 ##### Run the backend and frontend for development
@@ -130,20 +134,13 @@ Important: the script makes changes to system configuration (systemd, nginx) and
 
 Quick deploy steps (on a clean Debian/Ubuntu server):
 
-1. Install required packages (the script does this automatically):
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip nodejs npm nginx rsync
-```
-
-2. Copy or checkout the repository on the server and run the deploy script as root from the repo root:
+1. Copy or checkout the repository on the server and run the deploy script as root from the repo root:
 
 ```bash
 sudo bash scripts/deploy_prod.sh
 ```
 
-3. After the script completes:
+2. After the script completes:
 - Backend will be available via systemd service `vdesk-backend` listening on 127.0.0.1:8000
 - Nginx will serve the frontend on port 5173 and proxy /api to the backend
 
