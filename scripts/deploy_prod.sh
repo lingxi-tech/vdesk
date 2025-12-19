@@ -41,8 +41,14 @@ deactivate
 echo "Installing nvm and Node.js LTS..."
 export NVM_DIR="$HOME/.nvm"
 if [ ! -d "$NVM_DIR" ]; then
-  # install nvm (pinned version); this script is from official nvm repo
-  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.6/install.sh | bash
+  # install nvm (pinned version v0.39.6); use local copy if available, otherwise download
+  if [ -f "$REPO_DIR/scripts/nvm-install.sh" ]; then
+    echo "Using local nvm install script (v0.39.6)"
+    bash "$REPO_DIR/scripts/nvm-install.sh"
+  else
+    echo "Downloading nvm install script from official repo (v0.39.6)"
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.6/install.sh | bash
+  fi
 fi
 # load nvm
 if [ -s "$NVM_DIR/nvm.sh" ]; then
