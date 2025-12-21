@@ -97,9 +97,10 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable vdesk-backend
-systemctl restart vdesk-backend || systemctl start vdesk-backend || true
+# comment the following lines for using in dockerfile
+# systemctl daemon-reload
+# systemctl enable vdesk-backend
+# systemctl restart vdesk-backend || systemctl start vdesk-backend || true
 
 # Nginx configuration to serve frontend and proxy /api to backend
 cat > "$NGINX_SITE" <<'EOF'
@@ -142,7 +143,8 @@ ln -sf "$NGINX_SITE" "$NGINX_LINK"
 
 # Test and reload nginx
 nginx -t
-systemctl restart nginx
+# comment the following lines for using in dockerfile
+# systemctl restart nginx
 
 echo "Deployment finished."
 echo "Frontend: http://<server-host>/"

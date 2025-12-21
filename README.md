@@ -127,8 +127,9 @@ npm run dev
 ```
 
 
-##### Production deployment
+## Production deployment
 
+### Deploy script
 A helper script is included at `scripts/deploy_prod.sh` to install and configure the application on a Debian/Ubuntu server. The script will:
 - copy the repository to `/opt/vdesk` (use sudo)
 - create a Python virtualenv and install backend requirements
@@ -138,19 +139,51 @@ A helper script is included at `scripts/deploy_prod.sh` to install and configure
 
 Important: the script makes changes to system configuration (systemd, nginx) and must be run as root. Review the script before running.
 
-Quick deploy steps (on a clean Debian/Ubuntu server):
 
-1. Copy or checkout the repository on the server and run the deploy script as root from the repo root:
+### Create the docker image for production
 
+The `scripts/deploy_prod.sh` script is used while building the production deployment docker image.
+
+Build the image by running the following command in the root directory of the project:
 ```bash
-sudo bash scripts/deploy_prod.sh
+docker build -t vdesk-prod:latest -f docker/vdesk-prod/Dockerfile .
 ```
 
-2. After the script completes:
-- Backend will be available via systemd service `vdesk-backend` listening on 127.0.0.1:8000
-- Nginx will serve the frontend on port 5173 and proxy /api to the backend
+### Deploy on a server
+Quick deploy steps (on a clean Debian/Ubuntu server):
+```bash
+docker run -d \
+  -v /var/run/docker.sock:/docker.sock \
+  -e DOCKER_HOST=unix:///docker.sock \
+  -p 8008:80 \
+  --name vdesk-prod-container \
+  --privileged \
+  --gpus all \
+  vdesk-prod:latest /usr/sbin/init
+```
 
-Notes and post-deploy tasks:
+Then exec into the container and run the following script:
+```bash
+docker exec -it vdesk-prod-container /bin/bash
+```
+
+In the container, run:
+```bash
+systemctl daemon-reload
+systemctl enable vdesk-backend
+systemctl restart vdesk-backend || systemctl start vdesk-backend || true
+
+systemctl restart nginx
+rm /etc/nginx/sites-enabled/default
+systemctl reload nginx
+```
+
+After the container is started:
+- Backend will be available via systemd service `vdesk-backend` listening on 127.0.0.1:8000
+- frontend assets will be built and placed in `/opt/vdesk/web/frontend/dist/`
+- Nginx will serve the frontend on port 80 and proxy /api to the backend
+
+### Notes and post-deploy tasks:
 - SSL: the script does not configure TLS. For production you must add HTTPS (recommended via Let's Encrypt). Configure nginx to listen on 443 and set up certificates.
 - Docker: the backend manages containers by calling the host docker CLI. Ensure the backend process has access to the Docker socket (e.g. run on the host or run inside a container with `/var/run/docker.sock` mounted and proper permissions).
 - Users: a default admin user is created on first backend run with username `admin` and password `admin`. Change this immediately using the web UI change-password endpoint or by running:
