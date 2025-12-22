@@ -84,12 +84,20 @@ fi
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=vdesk backend service
-After=network.target
+After=network.target docker.service
+Requires=docker.service
 
 [Service]
 User=root
 WorkingDirectory=$INSTALL_DIR/web/backend
 Environment=PYTHONPATH=$INSTALL_DIR/web/backend
+Environment=DOCKER_HOST=unix:///docker.sock
+Environment=DOCKER_TLS_VERIFY=
+Environment=DOCKER_CERT_PATH=
+Environment=HTTP_PROXY=
+Environment=HTTPS_PROXY=
+Environment=NO_PROXY=
+
 ExecStart=$VENV_DIR/bin/uvicorn main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 
